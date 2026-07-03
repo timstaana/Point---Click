@@ -8,8 +8,9 @@ html, body {
   height: 100%;
 }
 
+/* The software cursor covers the whole page, letterbox included. */
 html, body {
-  cursor: auto;
+  cursor: none;
 }
 
 body {
@@ -111,6 +112,26 @@ body {
   text-decoration: none;
   -webkit-tap-highlight-color: rgba(255, 220, 100, 0.35);
 }
+/* Hint button — 40x40 art cel (ui_hint.gif / ui_hint_on.gif), top-right;
+   toggles hotspot outlines per room. The engine swaps the src. */
+#hint-button {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 40px;
+  height: 40px;
+  border: 0;
+}
+
+/* Hint mode (engine adds .hints to #game): trace the real hotspot
+   shapes with a soft dashed outline; keep the art readable. */
+#game.hints .hotspot-svg polygon {
+  fill: rgba(255, 220, 100, 0.12);
+  stroke: rgba(255, 220, 100, 0.85);
+  stroke-width: 3;
+  stroke-dasharray: 10 6;
+}
+
 /* Hotbar — dedicated 100px row overlapping the bottom of the stage. */
 #hotbar {
   position: absolute;

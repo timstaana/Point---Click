@@ -37,6 +37,8 @@
   var lastTouchTime = 0;
   var storyFlags = {};
   var objectStates = {};
+  var hintMode = false;
+  var hintBtnEl = null;
   var soundCache = {};
   var currentSounds = {};
 
@@ -74,14 +76,19 @@
     var onMove = function (evt) {
       evt = evt || window.event;
       if (Date.now() - lastTouchTime < 1000) return; // synthesized after a tap
+      // Game coordinates, unclamped: #game doesn't clip, so the cursor
+      // follows into the letterbox area outside the 800x600 canvas too.
       cursorX = (evt.clientX - currentTx) / currentScale;
       cursorY = (evt.clientY - currentTy) / currentScale;
-      if (cursorX < 0 || cursorY < 0 || cursorX > GAME_W || cursorY > GAME_H) {
-        cursorEl.style.display = 'none';
-        return;
-      }
       cursorEl.style.display = 'block';
       positionCursor();
+    };
+    var onOut = function (evt) {
+      evt = evt || window.event;
+      // hide only when the mouse leaves the window entirely
+      if (!(evt.relatedTarget || evt.toElement)) {
+        cursorEl.style.display = 'none';
+      }
     };
     var onTouch = function () {
       lastTouchTime = Date.now();
@@ -89,9 +96,11 @@
     };
     if (window.addEventListener) {
       window.addEventListener('mousemove', onMove, false);
+      document.addEventListener('mouseout', onOut, false);
       window.addEventListener('touchstart', onTouch, false);
     } else if (document.attachEvent) {
       document.attachEvent('onmousemove', onMove);
+      document.attachEvent('onmouseout', onOut);
     }
     updateCursor();
   }
@@ -121,14 +130,20 @@
     positionCursor();
   }
 
-  // #game carries state classes for the cursor/busy styling:
+  // #game carries state classes for the cursor/busy/hint styling:
   //   .busy  — an animation is playing (wait cursor, dimmed hotbar)
-  //   .using — an inventory item is selected (target reticle)
+  //   .using — an inventory item is selected (item icon cursor)
+  //   .hints — hotspot outlines are shown (per room, reset on entry)
   function updateGameClasses() {
     if (!gameEl) return;
-    var cls = busy ? 'busy' : '';
-    if (selectedItem) cls += (cls ? ' ' : '') + 'using';
-    gameEl.className = cls;
+    var cls = [];
+    if (busy) cls.push('busy');
+    if (selectedItem) cls.push('using');
+    if (hintMode) cls.push('hints');
+    gameEl.className = cls.join(' ');
+    if (hintBtnEl) {
+      hintBtnEl.src = 'images/' + (hintMode ? 'ui_hint_on.gif' : 'ui_hint.gif');
+    }
     updateCursor();
   }
 
@@ -154,6 +169,7 @@
     hotbarEl     = document.getElementById('hotbar');
     updateScale();
     initCursor();
+    initHintButton();
     renderHotbar();
     enterScene(current, null, 0);
   }
@@ -284,8 +300,24 @@
 
   /* ---------- scene lifecycle ---------- */
 
+  function initHintButton() {
+    var btn = document.getElementById('hint-button');
+    if (!btn) return;
+    hintBtnEl = btn;
+    preload('ui_hint_on.gif');
+    addTap(btn, function () {
+      hintMode = !hintMode;
+      playSceneSound('select');
+      updateGameClasses();
+    });
+    btn.onmouseover = function () { hoverCursor = 'point'; updateCursor(); };
+    btn.onmouseout  = function () { hoverCursor = null; updateCursor(); };
+  }
+
   function enterScene(name, entryAnim, entryDur) {
     current = name;
+    hintMode = false; // hints are per room
+    updateGameClasses();
     var scene = scenes[name];
     swapBg(scene.bg);
     loadSceneSounds(scene);
