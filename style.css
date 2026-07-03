@@ -1,0 +1,158 @@
+/* Point & Click — layered cels, full-viewport, ambient.
+   Safari 9 / TenFourFox / PowerFox safe. */
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+}
+
+html, body {
+  cursor: auto;
+}
+
+body {
+  background: #000;
+  overflow: hidden;
+  color: #eee;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Fixed 800x600 design surface. The hotbar overlaps the bottom of the
+   stage so assets are not stretched. JS applies scale() on load / resize to
+   fit the viewport while preserving aspect ratio. */
+#game {
+  position: absolute;
+  width: 800px;
+  height: 600px;
+  -webkit-transform-origin: 0 0;
+  transform-origin: 0 0;
+  top: 0;
+  left: 0;
+}
+
+#stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 800px;
+  height: 600px;
+  overflow: hidden;
+  background: #000;
+}
+
+/* Stacked layers inside #stage. Only the hotspot layer catches clicks. */
+.layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+}
+.layer.full {
+  width: 800px;
+  height: 600px;
+}
+
+#bg-layer,
+#char-layer {
+  display: block;
+  pointer-events: none;
+  width: 800px;
+  height: auto;
+}
+#item-layer { pointer-events: none; }
+
+.item {
+  position: absolute;
+  border: 0;
+  pointer-events: none;
+}
+
+/* Keep pixel-art crisp when scaled up: nearest-neighbour, no smoothing.
+   Applies to every image layer (bg, obj, char, items, hotbar, ghost).
+   Order matters — last supported value wins, `pixelated` is the best. */
+#game img, .drag-ghost {
+  image-rendering: -webkit-optimize-contrast; /* old WebKit / Safari 9 */
+  image-rendering: -moz-crisp-edges;          /* TenFourFox / old Gecko */
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+  -ms-interpolation-mode: nearest-neighbor;
+}
+
+#hotspot-layer { pointer-events: auto; }
+
+/* Hotspots are invisible; hover is indicated by the normal pointer.
+   The stage uses the browser default cursor for simplicity. */
+/* The engine renders an animated software cursor (#cursor-layer);
+   the native cursor is hidden everywhere inside the game. */
+#game, #game * {
+  cursor: none;
+}
+
+#cursor-layer {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  pointer-events: none;
+}
+
+/* Touch-friendly busy feedback: the hotbar dims while an animation plays. */
+#game.busy #hotbar { opacity: 0.4; }
+.hotspot {
+  position: absolute;
+  display: block;
+  background: transparent;
+  border: 0;
+  text-decoration: none;
+  -webkit-tap-highlight-color: rgba(255, 220, 100, 0.35);
+}
+/* Hotbar — dedicated 100px row overlapping the bottom of the stage. */
+#hotbar {
+  position: absolute;
+  top: 480px;
+  left: 0;
+  width: 800px;
+  height: 120px;
+  pointer-events: none;
+}
+
+.hotbar-slot {
+  position: absolute;
+  top: 10px;
+  width: 90px;
+  height: 90px;
+  -webkit-border-radius: 50%;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.35);
+  border: 2px solid rgba(255, 220, 100, 0.35);
+  -webkit-box-sizing: border-box;
+  box-sizing: border-box;
+}
+
+.hotbar-slot.selected {
+  border-color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.hotbar-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 70px;
+  height: 70px;
+  display: block;
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+  -webkit-transform: translate(-50%, -50%);
+}
+
+/* Item being dragged from the hotbar; follows pointer/finger. */
+.drag-ghost {
+  position: absolute;
+  pointer-events: none;
+}
