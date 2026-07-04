@@ -45,7 +45,7 @@
 
   // Bump when debugging stale caches on devices; shown in the letterbox
   // corner so you can tell at a glance which build a device is running.
-  var BUILD = 'b7';
+  var BUILD = 'b9';
 
   // iOS home-screen (standalone) mode: Web Audio there can pass every
   // check (clock running, no errors) yet route no sound to the speaker,
@@ -111,7 +111,8 @@
     'point':   [19, 1],
     'left':    [1, 20],
     'right':   [39, 20],
-    'wait':    [20, 20]
+    'wait':    [20, 20],
+    'ffwd':    [20, 20]  // skippable cutscene: tap to fast-forward
   };
   var cursorWrap = null;
   var cursorImgs = {};
@@ -173,7 +174,8 @@
 
   function updateCursor() {
     if (!cursorWrap) return;
-    var name = busy ? 'wait'
+    var name = cutsceneActive ? (cutsceneSkippable ? 'ffwd' : 'wait')
+             : busy ? 'wait'
              : selectedItem ? 'item:' + selectedItem
              : (hoverCursor || 'default');
     if (name !== cursorName) {
@@ -192,6 +194,7 @@
   }
 
   var cutsceneActive = false;
+  var cutsceneSkippable = false;
 
   function updateGameClasses() {
     if (!gameEl) return;
@@ -537,6 +540,22 @@
     return { sheet: getSheet(name), start: Date.now() };
   }
 
+  // Natural length of a one-shot clip (frames x ms-per-frame); 0 for
+  // looping/static/unknown art — callers fall through to their default.
+  // This is how scene `dur`s stay in sync with the GIF sources: omit
+  // dur and the clip's real length is used automatically.
+  function clipLength(name) {
+    var meta = name && window.SHEETS && window.SHEETS[name];
+    if (!meta || meta.loop) return 0;
+    return meta.frames * meta.dur;
+  }
+
+  function actionDur(h) {
+    return h.dur ||
+           Math.max(clipLength(h.anim), clipLength(h.objAnim)) ||
+           900;
+  }
+
   function clipFrame(clip, now) {
     var s = clip.sheet;
     if (s.frames <= 1) return 0;
@@ -633,6 +652,7 @@
       return;
     }
     cutsceneActive = true;
+    cutsceneSkippable = !!cs.skip;
     setBusy(true);
     clearHotspots();
     clearItems();
@@ -666,7 +686,8 @@
       if (st.anim) swapChar(st.anim);
       requestPaint();
       if (st.sound) playFile(st.sound);
-      timer = window.setTimeout(step, st.dur || 2000);
+      timer = window.setTimeout(step,
+        st.dur || clipLength(st.anim) || clipLength(st.bg) || 2000);
     }
     if (cs.skip) {
       var skipEl = document.createElement('div');
@@ -913,7 +934,7 @@
           src: stem + '_closed.png',
           needs: locked.needs,
           objAnim: stem + '_use.png',
-          dur: locked.dur || 2000,
+          dur: locked.dur || clipLength(stem + '_use.png') || 2000,
           sound: locked.sound,
           hint: locked.hint, hintDur: locked.hintDur,
           failAnim: locked.failAnim, failDur: locked.failDur, failThen: locked.failThen,
@@ -1088,7 +1109,7 @@
     window.setTimeout(function () {
       setBusy(false);
       dispatch(h);
-    }, h.dur);
+    }, actionDur(h));
   }
 
   function triggerWrongItem(h, itemId) {
@@ -1097,7 +1118,7 @@
     playSfx('fail', h);
     var scene = scenes[current] || {};
     var failAnim = h.failAnim || scene.failAnim || DEFAULT_FAIL_ANIM;
-    var failDur  = h.failDur  || scene.failDur  || 900;
+    var failDur  = h.failDur  || scene.failDur  || clipLength(failAnim) || 900;
     var failThen = h.failThen || scene.failThen;
     setBusy(true);
     clearHotspots();
@@ -1161,7 +1182,8 @@
       preloadScene(target, h.entryAnim, function () {
         setBusy(false);
         playSfx('door', h);
-        enterScene(target, h.entryAnim, h.entryDur || 1200);
+        enterScene(target, h.entryAnim,
+                   h.entryDur || clipLength(h.entryAnim) || 1200);
       });
       return;
     }

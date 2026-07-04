@@ -13,7 +13,13 @@
  *
  *   area:  [x1,y1,x2,y2] rectangle, or a longer list for a polygon
  *   anim / objAnim: character clip / object overlay clip (both may play)
- *   dur:   length of the clip, ms — clips play once and hold
+ *   dur:   OPTIONAL wait in ms. Omit it and the clip's real length
+ *          (frames x ms-per-frame, straight from the GIF) is used
+ *          automatically — art timing changes never need edits here.
+ *          Specify only to override: hold longer than the clip (e.g.
+ *          a voice line plays over the held last frame), or to time a
+ *          LOOPING clip, which has no natural length. Same rule for
+ *          entryDur, gate locked.dur and cutscene step durs.
  *   then:  what happens after the clip: 'go:scene' or 'pick:item'
  *          (omit to just return to idle)
  *   cursor: hover cursor name -> cursor_<name>.png (40x40, same size as
@@ -104,15 +110,16 @@
  *   Scenes reference the name directly. No sheets.js entry = static.
  *   Stage cels other than backgrounds are transparent PNGs.
  *
- * ART WORKFLOW — the art team never edits strips or sheets.js by hand:
- *   1. author animated clips as GIFs in art/ (800x600; loop-forever
- *      GIF = looping clip, play-once GIF = one-shot clip)
+ * ART WORKFLOW — ALL art is authored as GIFs in art/ (stage clips,
+ * icons, cursors, ui); nobody edits strips or sheets.js by hand:
+ *   1. author in art/ — animated clips are 800x600 (loop-forever GIF =
+ *      looping clip, play-once GIF = one-shot); statics are
+ *      single-frame GIFs at their natural size (40x40 icons/cursors,
+ *      800x120 hotbar, ...)
  *   2. run:  python3 tools/make_sheets.py
- *      -> writes the strips into images/ and updates images/sheets.js
- *   Static art (icons, cursors, ui, single-frame cels) can be edited
- *   directly as PNGs in images/. If the GIF sources are ever lost,
- *   `python3 tools/make_sheets.py --from-pngs` rebuilds art/ from the
- *   current strips.
+ *      -> writes PNGs into images/ and updates images/sheets.js
+ *   If the GIF sources are ever lost, `python3 tools/make_sheets.py
+ *   --from-pngs` rebuilds all of art/ from images/.
  *   character clips: named explicitly in the scene (char_*.png)
  *   gate:  gate_<id>_closed.png  loops while blocked (whole prop!)
  *          gate_<id>_use.png     one-shot when the right item is used
@@ -162,15 +169,14 @@ window.SCENES = {
     bg: 'bg_bedroom.png',
     idle: 'char_bedroom_idle.png',
     failAnim: 'char_bedroom_cant_use.png',
-    failDur: 1000,
-    objects: [
+        objects: [
       { item: 'key', area: [560, 260, 720, 400],
-        anim: 'char_bedroom_pick_key.png', dur: 2000 },
+        anim: 'char_bedroom_pick_key.png' },
 
       { area: [40, 120, 220, 420], cursor: 'left',
-        anim: 'char_bedroom_exit_left.png', dur: 1400,
+        anim: 'char_bedroom_exit_left.png',
         then: 'go:hallway',
-        entryAnim: 'char_hallway_from_bedroom.png', entryDur: 1400 },
+        entryAnim: 'char_hallway_from_bedroom.png' },
 
       { area: [300, 350, 480, 470],
         anim: 'char_bedroom_look_bed.png', dur: 2800,
@@ -185,33 +191,32 @@ window.SCENES = {
     bg: 'bg_hallway.png',
     idle: 'char_hallway_idle.png',
     failAnim: 'char_hallway_cant_use.png',
-    failDur: 1000,
-    objects: [
+        objects: [
       { area: [0, 150, 180, 450], cursor: 'left',
-        anim: 'char_hallway_exit_left.png', dur: 1400,
+        anim: 'char_hallway_exit_left.png',
         then: 'go:bedroom',
-        entryAnim: 'char_bedroom_from_hallway.png', entryDur: 1400 },
+        entryAnim: 'char_bedroom_from_hallway.png' },
 
       { gate: 'hallway_gardendoor', area: [620, 150, 800, 450],
         locked: {
-          needs: 'key', dur: 2000, sound: 'door.wav',
+          needs: 'key', sound: 'door.wav',
           cursor: 'right',
           hint: 'vo_gardendoor_locked.wav', hintDur: 2500
         },
         open: {
           cursor: 'right',
-          anim: 'char_hallway_exit_right.png', dur: 1400,
+          anim: 'char_hallway_exit_right.png',
           sound: 'door.wav',
           then: 'go:garden',
-          entryAnim: 'char_garden_from_hallway.png', entryDur: 1400
+          entryAnim: 'char_garden_from_hallway.png'
         } },
 
       { area: [300, 200, 500, 420],
-        objAnim: 'obj_hallway_look_painting.png', dur: 900,
+        objAnim: 'obj_hallway_look_painting.png',
         sound: 'pickup.wav'},
 
       { item: 'string', area: [510, 380, 620, 460],
-        anim: 'char_hallway_pick_string.png', dur: 2000 }
+        anim: 'char_hallway_pick_string.png' }
     ]
   },
 
@@ -219,33 +224,32 @@ window.SCENES = {
     bg: 'bg_garden.png',
     idle: 'char_garden_idle.png',
     failAnim: 'char_garden_cant_use.png',
-    failDur: 1000,
-    objects: [
+        objects: [
       { area: [0, 150, 180, 450], cursor: 'left',
-        anim: 'char_garden_exit_left.png', dur: 1400,
+        anim: 'char_garden_exit_left.png',
         then: 'go:hallway',
-        entryAnim: 'char_hallway_from_garden.png', entryDur: 1400 },
+        entryAnim: 'char_hallway_from_garden.png' },
 
       { item: 'stick', area: [190, 380, 300, 460],
-        anim: 'char_garden_pick_stick.png', dur: 2000 },
+        anim: 'char_garden_pick_stick.png' },
 
       { area: [400, 300, 600, 470], when: { flag: 'coinFished', value: false },
-        anim: 'char_garden_look_fountain.png', dur: 900,
+        anim: 'char_garden_look_fountain.png',
         items: {
-          fishingrod: { anim: 'char_garden_fish.png', dur: 2000,
+          fishingrod: { anim: 'char_garden_fish.png',
                         sound: 'pickup.wav',
                         then: 'pick:coin', setFlag: 'coinFished' }
         } },
 
       { area: [400, 300, 600, 470], when: { flag: 'coinFished' },
-        anim: 'char_garden_look_fountain.png', dur: 900,
+        anim: 'char_garden_look_fountain.png',
         items: {
           fishingrod: { hint: 'vo_fountain_empty.wav', hintDur: 1100 }
         } },
 
       { gate: 'garden_gnome', area: [620, 320, 780, 470],
         locked: {
-          needs: 'coin', dur: 2000, sound: 'pickup.wav',
+          needs: 'coin', sound: 'pickup.wav',
           hint: 'vo_gnome_wants.wav', hintDur: 3100,
           setFlag: 'gnomePaid',
           then: 'cut:gnome_dance'
@@ -253,7 +257,7 @@ window.SCENES = {
         open: { sound: 'select.wav' } },
 
       { item: 'medal', when: { flag: 'gnomePaid' }, area: [640, 410, 735, 470],
-        anim: 'char_garden_pick_medal.png', dur: 2000 }
+        anim: 'char_garden_pick_medal.png' }
     ]
   }
 

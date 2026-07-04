@@ -8,20 +8,25 @@ Art team workflow:
   2. Run:  python3 tools/make_sheets.py
   3. Done — images/ gets the PNG strips and images/sheets.js is updated.
 
-Details:
+ALL art goes through art/ — stage clips, UI, icons, cursors:
   - Multi-frame GIF  -> images/<name>.png horizontal frame strip
                         + a sheets.js entry (frames / ms-per-frame / loop).
   - Single-frame GIF -> images/<name>.png static image (no entry).
+    Statics keep their natural size (40x40 icons/cursors, 800x120
+    hotbar, ...); only ANIMATED clips must be 800x600.
   - Frame duration comes from the GIF (averaged if frames differ,
     rounded to 10ms). Existing sheets.js entries for art not in art/
-    are left alone. Static art (icons, cursors, ui) can also just be
-    edited directly as PNGs in images/ — no GIF needed.
+    are left alone.
+  - Scene timing follows automatically: the engine times actions from
+    the clip's real length (sheets.js), so re-timing a GIF and
+    rebuilding is enough — scenes.js only carries explicit durs as
+    overrides (voice-line holds, looping clips).
 
 Recovery:
   python3 tools/make_sheets.py --from-pngs
-  regenerates art/*.gif from the current strips + sheets.js
-  (bootstrap after losing the GIF sources; colors are quantized
-  to the GIF palette).
+  regenerates art/*.gif from everything in images/ (strips via
+  sheets.js, all other PNGs as single-frame GIFs) — bootstrap after
+  losing the GIF sources; colors are quantized to the GIF palette.
 """
 
 import json
@@ -102,6 +107,7 @@ def to_gif_frame(rgba):
 def from_pngs():
     os.makedirs(ART, exist_ok=True)
     sheets = load_sheets()
+    count = 0
     for name, meta in sorted(sheets.items()):
         strip = Image.open(os.path.join(IMAGES, meta['file'])).convert('RGBA')
         n = meta['frames']
@@ -113,10 +119,25 @@ def from_pngs():
         if meta.get('loop'):
             kwargs['loop'] = 0  # forever
         frames[0].save(out, **kwargs)
+        count += 1
         print('%-36s -> art/%s (%d frames, %dms, %s)' %
               (name, os.path.basename(out), n, meta['dur'],
                'loop' if meta.get('loop') else 'once'))
-    print('regenerated %d GIFs in art/' % len(sheets))
+    # everything else in images/ (icons, cursors, ui, static cels) ->
+    # single-frame GIFs
+    strips = {}
+    for name in sheets:
+        strips[sheets[name]['file']] = True
+    for f in sorted(os.listdir(IMAGES)):
+        if not f.lower().endswith('.png') or f in strips:
+            continue
+        im = Image.open(os.path.join(IMAGES, f)).convert('RGBA')
+        out = os.path.join(ART, f[:-4] + '.gif')
+        to_gif_frame(im).save(out, transparency=255, optimize=False)
+        count += 1
+        print('%-36s -> art/%s (static %dx%d)' %
+              (f, os.path.basename(out), im.size[0], im.size[1]))
+    print('regenerated %d GIFs in art/' % count)
 
 
 if __name__ == '__main__':
