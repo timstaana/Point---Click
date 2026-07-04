@@ -16,11 +16,11 @@
  *   dur:   length of the clip, ms — clips play once and hold
  *   then:  what happens after the clip: 'go:scene' or 'pick:item'
  *          (omit to just return to idle)
- *   cursor: hover cursor name -> cursor_<name>.gif (40x40 animated cel,
- *          same size as icons); e.g. 'left'/'right' on exits pointing
- *          toward the next room. Hotspots default to 'point'. Automatic
- *          states: busy shows 'wait', and while an inventory item is
- *          selected the cursor is that item's own icon.
+ *   cursor: hover cursor name -> cursor_<name>.png (40x40, same size as
+ *          icons); e.g. 'left'/'right' on exits pointing toward the next
+ *          room. Hotspots default to 'point'. Automatic states: busy
+ *          shows 'wait', and while an inventory item is selected the
+ *          cursor is that item's own icon.
  *
  * ITEM INTERACTIONS — the same idea everywhere:
  *   needs: 'key'      the one item this object wants (consumed on use
@@ -50,7 +50,7 @@
  *   locked: { needs: 'grapple', ... }.
  *   window.COMBINE_HINT: voice line for a no-recipe pair; if unset,
  *   tapping two unrelated items just switches the selection.
- *   ART: only icon_<makes>.gif (40x40) — the result never lies in a room.
+ *   ART: only icon_<makes> (40x40) — the result never lies in a room.
  *
  * STORY FLAGS (optional, for cross-object logic — this is how a puzzle
  * dependency chart maps onto scenes: `needs` is an item edge, `when` is
@@ -66,6 +66,9 @@
  *
  * ART CONTRACT — everything except backgrounds is a full-frame 800x600
  * transparent GIF cel; scene data never contains art coordinates.
+ * (Delivery stays GIF; make_sheets.py flattens stage art to PNG strips
+ * for the canvas renderer and UI art to static PNGs — run it after any
+ * art change. Scenes always reference the .gif names.)
  *   character clips: named explicitly in the scene (char_*.gif)
  *   gate:  gate_<id>_closed.gif  loops while blocked (whole prop!)
  *          gate_<id>_use.gif     one-shot when the right item is used
@@ -73,7 +76,7 @@
  *          The prop lives ONLY in the cels, never in the background,
  *          and the last _use frame must match _open.
  *   item:  item_<scene>_<id>.gif (full-frame cel of it in that room)
- *          + icon_<id>.gif (40x40 hotbar; also the drag cursor)
+ *          + icon_<id> (40x40 hotbar; also the held-item cursor)
  */
 
 window.COMBINE = [

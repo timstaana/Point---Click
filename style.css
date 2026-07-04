@@ -62,25 +62,12 @@ body {
   height: 600px;
 }
 
-#bg-layer,
-#char-layer {
-  display: block;
-  pointer-events: none;
-  width: 800px;
-  height: auto;
-}
-#item-layer { pointer-events: none; }
-
-.item {
-  position: absolute;
-  border: 0;
-  pointer-events: none;
-}
+#stage-canvas { pointer-events: none; }
 
 /* Keep pixel-art crisp when scaled up: nearest-neighbour, no smoothing.
-   Applies to every image layer (bg, obj, char, items, hotbar, ghost).
+   Applies to the stage canvas and every UI image (hotbar, cursor, hint).
    Order matters — last supported value wins, `pixelated` is the best. */
-#game img, .drag-ghost {
+#game img, #stage-canvas, .drag-ghost {
   image-rendering: -webkit-optimize-contrast; /* old WebKit / Safari 9 */
   image-rendering: -moz-crisp-edges;          /* TenFourFox / old Gecko */
   image-rendering: crisp-edges;

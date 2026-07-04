@@ -1,12 +1,18 @@
-/* Point & Click — layered-cel engine with tap-to-select item use.
- * ES5 safe. Targets: Safari 9+ (iPad mini 1), TenFourFox / PowerFox.
+/* Point & Click — single-canvas cel engine with tap-to-select item use.
+ * ES5 safe. Targets: Safari 8+ (iPad mini 1, iOS 8), TenFourFox / PowerFox.
  *
- * Rendering model — 5 stacked layers inside #stage:
- *   1. #bg-layer     : scene background, opaque, looping ambient
- *   2. #item-layer   : per-item <img> overlays, hidden once picked up
- *   3. #char-layer   : single 800x500 transparent character clip
- *   4. #hotspot-layer: transparent clickable divs
- *   5. #hotbar       : 6 circular slots along the bottom
+ * Rendering model — everything painted onto ONE <canvas> (iOS 8 flashes
+ * when transparent animated GIFs are layered in the DOM, so we never do
+ * that). Channels composited in order each tick:
+ *   bg -> item cels -> object overlay -> character
+ * Authoring stays animated GIFs; a build step (make_sheets.py) flattens
+ * each stage GIF into a PNG frame-strip + images/sheets.js manifest
+ * (frames / per-frame ms / loop). The engine owns the animation clock,
+ * so clips restart deterministically (no ?t= cache-buster reloads).
+ * Small UI art (hotbar icons, cursors, hint button) stays as GIF <img>s.
+ *
+ * DOM: #stage-canvas, #hotspot-layer (transparent clickable SVGs),
+ * #hotbar, #hint-button, #cursor-layer.
  *
  * Interaction model:
  *   - Tap a hotspot to play its char clip, then dispatch (go / pick).
@@ -14,8 +20,7 @@
  *
  * The stage is a fixed 800x600 design surface. The hotbar overlaps the
  * bottom of the stage rather than increasing the game area. JS applies a
- * scale() transform on load / resize to fit the viewport (aspect ratio
- * preserved).
+ * scale on load / resize to fit the viewport (aspect ratio preserved).
  */
 
 (function () {
@@ -29,8 +34,7 @@
   var spent = {};
   var selectedItem = null;
 
-  var gameEl, stageEl, bgImg, objImg, charImg, itemLayer, hotspotLayer, hotbarEl;
-  var swapSeq = 0;
+  var gameEl, stageEl, canvasEl, ctx, hotspotLayer, hotbarEl;
   var currentScale = 1;
   var currentTx = 0;
   var currentTy = 0;
@@ -67,7 +71,7 @@
 
   function initCursor() {
     for (var n in CURSORS) {
-      if (CURSORS.hasOwnProperty(n)) preload('cursor_' + n + '.gif');
+      if (CURSORS.hasOwnProperty(n)) preload('cursor_' + n + '.png');
     }
     cursorEl = document.createElement('img');
     cursorEl.id = 'cursor-layer';
@@ -113,7 +117,7 @@
 
   function iconFor(itemId) {
     var meta = items[itemId] || {};
-    return meta.icon || 'icon_' + itemId + '.gif';
+    return meta.icon || 'icon_' + itemId + '.png';
   }
 
   function updateCursor() {
@@ -125,7 +129,7 @@
       cursorName = name;
       cursorEl.src = 'images/' + (selectedItem && !busy
         ? iconFor(selectedItem)
-        : 'cursor_' + name + '.gif');
+        : 'cursor_' + name + '.png');
     }
     positionCursor();
   }
@@ -142,7 +146,7 @@
     if (hintMode) cls.push('hints');
     gameEl.className = cls.join(' ');
     if (hintBtnEl) {
-      hintBtnEl.src = 'images/' + (hintMode ? 'ui_hint_on.gif' : 'ui_hint.gif');
+      hintBtnEl.src = 'images/' + (hintMode ? 'ui_hint_on.png' : 'ui_hint.png');
     }
     updateCursor();
   }
@@ -161,12 +165,11 @@
   function init() {
     gameEl       = document.getElementById('game');
     stageEl      = document.getElementById('stage');
-    bgImg        = document.getElementById('bg-layer');
-    objImg       = document.getElementById('obj-layer');
-    charImg      = document.getElementById('char-layer');
-    itemLayer    = document.getElementById('item-layer');
+    canvasEl     = document.getElementById('stage-canvas');
+    ctx          = canvasEl.getContext('2d');
     hotspotLayer = document.getElementById('hotspot-layer');
     hotbarEl     = document.getElementById('hotbar');
+    window.setInterval(tick, TICK_MS);
     updateScale();
     initCursor();
     initHintButton();
@@ -217,12 +220,14 @@
     el.onclick = function (evt) {
       if (evt && evt.preventDefault) evt.preventDefault();
       if (Date.now() - lastTouchTime < 500) return false;
+      unlockAudio();
       fn(evt);
       return false;
     };
     el.ontouchstart = function (evt) {
       if (evt && evt.preventDefault) evt.preventDefault();
       lastTouchTime = Date.now();
+      unlockAudio();
       fn(evt);
       return false;
     };
@@ -283,27 +288,124 @@
     }
   }
 
-  /* ---------- layer swap helpers ---------- */
+  /* ---------- iOS audio unlock ----------
+   * iOS only allows an Audio element's FIRST play() inside a user
+   * gesture. Sounds fired from setTimeout (door, pickup after a clip)
+   * would stay silent, so on the first touch/click we prime every wav
+   * the game references (play+pause inside the gesture unlocks it). */
+  var audioUnlocked = false;
 
-  function reloadSrc(img, fileName) {
-    swapSeq++;
-    var next = new Image();
-    next.onload = function () {
-      img.src = next.src;
-    };
-    next.onerror = function () {
-      img.src = 'images/' + fileName + '?t=' + swapSeq;
-    };
-    next.src = 'images/' + fileName + '?t=' + swapSeq;
+  function collectSoundFiles() {
+    var seen = {};
+    var list = [];
+    function add(f) {
+      if (f && typeof f === 'string' && !seen[f]) { seen[f] = true; list.push(f); }
+    }
+    var d = window.SOUNDS || DEFAULT_SOUNDS;
+    for (var k in d) { if (d.hasOwnProperty(k)) add(d[k]); }
+    add(window.COMBINE_HINT);
+    var combos = window.COMBINE || [];
+    for (var i = 0; i < combos.length; i++) add(combos[i].sound);
+    var str = '';
+    try { str = JSON.stringify(window.SCENES); } catch (e) {}
+    var found = str.match(/[\w\-]+\.wav/g) || [];
+    for (i = 0; i < found.length; i++) add(found[i]);
+    return list;
   }
 
-  function swapBg(fileName)   { bgImg.src = 'images/' + fileName; }
-  function swapObject(fileName) { objImg.style.display = ''; reloadSrc(objImg, fileName); }
-  function swapChar(fileName) { reloadSrc(charImg, fileName); }
-  function clearObject() {
-    objImg.style.display = 'none';
-    objImg.src = '';
+  function unlockAudio() {
+    if (audioUnlocked) return;
+    audioUnlocked = true;
+    var files = collectSoundFiles();
+    for (var i = 0; i < files.length; i++) {
+      var a = loadSound(files[i]);
+      if (!a || !a.play) continue;
+      try {
+        a.play();
+        a.pause();
+        a.currentTime = 0;
+      } catch (e) {}
+    }
   }
+
+  /* ---------- canvas channels & animation clock ---------- */
+
+  var TICK_MS = 100;
+  var channels = { bg: null, items: [], obj: null, char: null };
+  var sheetCache = {};
+  var lastPaintKey = '';
+  var needPaint = true;
+
+  function requestPaint() { needPaint = true; }
+
+  function getSheet(name) {
+    if (sheetCache[name]) return sheetCache[name];
+    var meta = (window.SHEETS && window.SHEETS[name]) || null;
+    var img = new Image();
+    img.onload = requestPaint;
+    img.src = 'images/' + (meta ? meta.file : name);
+    sheetCache[name] = {
+      img: img,
+      frames: meta ? meta.frames : 1,
+      dur: meta ? meta.dur : 1000,
+      loop: meta ? !!meta.loop : true
+    };
+    return sheetCache[name];
+  }
+
+  function makeClip(name) {
+    return { sheet: getSheet(name), start: Date.now() };
+  }
+
+  function clipFrame(clip, now) {
+    var s = clip.sheet;
+    if (s.frames <= 1) return 0;
+    var f = Math.floor((now - clip.start) / s.dur);
+    if (s.loop) return f % s.frames;
+    return f < s.frames - 1 ? f : s.frames - 1; // play once, hold last
+  }
+
+  function drawClip(clip, now) {
+    var s = clip.sheet;
+    if (!s.img.complete || !s.img.width) return;
+    ctx.drawImage(s.img, clipFrame(clip, now) * GAME_W, 0, GAME_W, GAME_H,
+                  0, 0, GAME_W, GAME_H);
+  }
+
+  // One string describing what this tick would paint; repaint only when
+  // it changes, so idle costs nothing between GIF-frame boundaries.
+  function paintKey(now) {
+    var parts = [];
+    function add(c) {
+      parts.push(c ? c.sheet.img.src + ':' + clipFrame(c, now) +
+                     ':' + (c.sheet.img.complete ? 1 : 0) : '-');
+    }
+    add(channels.bg);
+    for (var i = 0; i < channels.items.length; i++) add(channels.items[i]);
+    add(channels.obj);
+    add(channels.char);
+    return parts.join('|');
+  }
+
+  function tick() {
+    var now = Date.now();
+    var key = paintKey(now);
+    if (!needPaint && key === lastPaintKey) return;
+    // hold the previous pixels until the background can be drawn — the
+    // canvas never shows a bare flash mid-swap
+    if (!channels.bg || !channels.bg.sheet.img.complete) return;
+    needPaint = false;
+    lastPaintKey = key;
+    drawClip(channels.bg, now);
+    for (var i = 0; i < channels.items.length; i++) drawClip(channels.items[i], now);
+    if (channels.obj) drawClip(channels.obj, now);
+    if (channels.char) drawClip(channels.char, now);
+  }
+
+  function swapBg(fileName)     { channels.bg = makeClip(fileName); requestPaint(); }
+  function swapChar(fileName)   { channels.char = makeClip(fileName); requestPaint(); }
+  function swapObject(fileName) { channels.obj = makeClip(fileName); requestPaint(); }
+  function clearObject()        { channels.obj = null; requestPaint(); }
 
   /* ---------- scene lifecycle ---------- */
 
@@ -311,7 +413,7 @@
     var btn = document.getElementById('hint-button');
     if (!btn) return;
     hintBtnEl = btn;
-    preload('ui_hint_on.gif');
+    preload('ui_hint_on.png');
     addTap(btn, function () {
       hintMode = !hintMode;
       playSceneSound('select');
@@ -346,31 +448,11 @@
 
   function showIdle() {
     var scene = scenes[current];
+    // all channel changes land in the same tick, so the swap is atomic —
+    // no load races, no flash between overlay end and new state sprite
+    clearObject();
     swapChar(scene.idle);
     renderSceneObjects(scene);
-    clearObjectWhenReady();
-  }
-
-  // Keep the previous action's last overlay frame visible until the item
-  // layer's images have actually loaded, so a state swap (e.g. a gate's
-  // _use clip ending) doesn't flash the bare background. Skips the clear
-  // if another swap started in the meantime.
-  function clearObjectWhenReady() {
-    var seq = swapSeq;
-    var imgs = itemLayer.getElementsByTagName('img');
-    var pending = 1;
-    function done() {
-      pending--;
-      if (pending <= 0 && swapSeq === seq) clearObject();
-    }
-    for (var i = 0; i < imgs.length; i++) {
-      if (!imgs[i].complete) {
-        pending++;
-        imgs[i].onload = done;
-        imgs[i].onerror = done;
-      }
-    }
-    done();
   }
 
   /* ---------- scene items ---------- */
@@ -381,13 +463,9 @@
     for (var i = 0; i < list.length; i++) {
       var it = list[i];
       if (!itemMatches(it) || hasItem(it.id) || spent[it.id]) continue;
-      var img = document.createElement('img');
-      img.src = 'images/' + it.src;
-      img.className = 'item';
-      img.style.left = it.x + 'px';
-      img.style.top = it.y + 'px';
-      itemLayer.appendChild(img);
+      channels.items.push(makeClip(it.src));
     }
+    requestPaint();
   }
 
   /* ---------- story-flag conditions ----------
@@ -427,7 +505,8 @@
   }
 
   function clearItems() {
-    while (itemLayer.firstChild) itemLayer.removeChild(itemLayer.firstChild);
+    channels.items = [];
+    requestPaint();
   }
 
   function renderSceneObjects(scene) {
@@ -444,7 +523,7 @@
   //   item_<id>.gif (full-frame cel) / icon_<id>.gif (40x40 hotbar icon)
   function expandItem(obj) {
     if (!obj.item) return obj;
-    preload('icon_' + obj.item + '.gif');
+    preload(iconFor(obj.item));
     return {
       id: obj.item,
       src: 'item_' + current + '_' + obj.item + '.gif',
@@ -467,8 +546,12 @@
   function preload(fileName) {
     if (!fileName || preloaded[fileName]) return;
     preloaded[fileName] = true;
+    if (window.SHEETS && window.SHEETS[fileName]) {
+      getSheet(fileName); // stage art: warm the PNG strip
+      return;
+    }
     var im = new Image();
-    im.src = 'images/' + fileName;
+    im.src = 'images/' + fileName; // UI art: plain GIF
   }
 
   // Authoring sugar: `hint`/`hintDur` are the friendly names for a
@@ -545,17 +628,13 @@
       var obj = normalizeAction(resolveObject(expandGate(expandItem(list[i]))));
       if (!objectMatches(obj) || isObjectSpent(obj)) continue;
       if (obj.src) {
-        var img = document.createElement('img');
-        img.src = 'images/' + obj.src;
-        img.className = 'item';
-        img.style.left = (obj.x || 0) + 'px';
-        img.style.top = (obj.y || 0) + 'px';
-        itemLayer.appendChild(img);
+        channels.items.push(makeClip(obj.src));
       }
       if (obj.area) {
         hotspotLayer.appendChild(makeHotspotEl(obj));
       }
     }
+    requestPaint();
   }
 
   function objectMatches(obj) {
