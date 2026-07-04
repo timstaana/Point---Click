@@ -383,14 +383,40 @@
     }
   }
 
-  function itemMatches(it) {
-    if (!it.when) return true;
-    if (it.when.flag) {
-      var flagValue = storyFlags[it.when.flag];
-      if (it.when.value === undefined) return !!flagValue;
-      return flagValue === it.when.value;
+  /* ---------- story-flag conditions ----------
+   * `when` is one condition or an array of conditions that must ALL hold
+   * (the AND of a puzzle dependency chart). For OR, list the object more
+   * than once with different `when`s — every matching object renders. */
+  function condMatches(c) {
+    if (!c || !c.flag) return true;
+    var flagValue = storyFlags[c.flag];
+    if (c.value === undefined) return !!flagValue;
+    if (c.value === false) return !flagValue;
+    return flagValue === c.value;
+  }
+
+  function eachFlag(v, fn) {
+    if (!v) return;
+    if (Array.isArray(v)) {
+      for (var i = 0; i < v.length; i++) fn(v[i]);
+    } else {
+      fn(v);
     }
-    return true;
+  }
+
+  function whenMatches(when) {
+    if (!when) return true;
+    if (Array.isArray(when)) {
+      for (var i = 0; i < when.length; i++) {
+        if (!condMatches(when[i])) return false;
+      }
+      return true;
+    }
+    return condMatches(when);
+  }
+
+  function itemMatches(it) {
+    return whenMatches(it.when);
   }
 
   function clearItems() {
@@ -523,14 +549,7 @@
   }
 
   function objectMatches(obj) {
-    if (!obj.when) return true;
-    if (obj.when.flag) {
-      var flagValue = storyFlags[obj.when.flag];
-      if (obj.when.value === undefined) return !!flagValue;
-      if (obj.when.value === false) return !flagValue;
-      return flagValue === obj.when.value;
-    }
-    return true;
+    return whenMatches(obj.when);
   }
 
   function isObjectSpent(obj) {
@@ -554,14 +573,7 @@
   }
 
   function hotspotMatches(h) {
-    if (!h.when) return true;
-    if (h.when.flag) {
-      var flagValue = storyFlags[h.when.flag];
-      if (h.when.value === undefined) return !!flagValue;
-      if (h.when.value === false) return !flagValue;
-      return flagValue === h.when.value;
-    }
-    return true;
+    return whenMatches(h.when);
   }
 
   // A pick-hotspot is spent once its item is in inventory (or was consumed).
@@ -734,14 +746,14 @@
     if (h.setState && h.id) {
       objectStates[h.id] = h.setState;
     }
-    if (h.setFlagValue !== undefined && h.setFlag) {
+    // setFlag / clearFlag accept one name or an array of names, so one
+    // action can satisfy several puzzle dependencies at once.
+    if (h.setFlagValue !== undefined && h.setFlag && !Array.isArray(h.setFlag)) {
       storyFlags[h.setFlag] = h.setFlagValue;
-    } else if (h.setFlag) {
-      storyFlags[h.setFlag] = true;
+    } else {
+      eachFlag(h.setFlag, function (f) { storyFlags[f] = true; });
     }
-    if (h.clearFlag) {
-      delete storyFlags[h.clearFlag];
-    }
+    eachFlag(h.clearFlag, function (f) { delete storyFlags[f]; });
 
     if (action.indexOf('go:') === 0) {
       playSceneSound('door', h);

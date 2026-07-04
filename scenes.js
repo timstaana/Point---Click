@@ -39,9 +39,17 @@
  * Using the right item plays the one-shot use clip and the gate stays
  * open for the rest of the game.
  *
- * STORY FLAGS (optional, for cross-object logic):
- *   when: { flag: 'x', value: true } — show this object only if the flag
- *   matches; setFlag / setFlagValue / clearFlag — change it after a click.
+ * STORY FLAGS (optional, for cross-object logic — this is how a puzzle
+ * dependency chart maps onto scenes: `needs` is an item edge, `when` is
+ * the AND of flag edges, `setFlag` is the node's outgoing edges):
+ *   when: { flag: 'x' }                      truthy check
+ *         { flag: 'x', value: false }        not-yet check
+ *         [{ flag: 'x' }, { flag: 'y' }]     ALL must hold (AND)
+ *         (for OR, list the object twice with different `when`s —
+ *          every matching object renders)
+ *   setFlag: 'x' or ['x', 'y']   set after the click completes
+ *   clearFlag: 'x' or ['x', 'y'] clear after the click completes
+ *   setFlagValue: with a single setFlag, set it to a specific value
  *
  * ART CONTRACT — everything except backgrounds is a full-frame 800x600
  * transparent GIF cel; scene data never contains art coordinates.
