@@ -23,7 +23,8 @@
  *          selected the cursor is that item's own icon.
  *
  * ITEM INTERACTIONS — the same idea everywhere:
- *   needs: 'key'      the one item this object wants (consumed on use)
+ *   needs: 'key'      the one item this object wants (consumed on use
+ *                     unless keepItem: true — for reusable tools)
  *   hint / hintDur:   voice line when tapped with no or a wrong item,
  *                     e.g. "It's locked, I need a key" — hintDur should
  *                     match the line so the character holds the fail pose
@@ -44,9 +45,11 @@
  *     { parts: ['rope', 'hook'], makes: 'grapple',
  *       sound: 'combine.wav', setFlag: 'madeGrapple' }
  *   ];
- *   Both parts are consumed and the result lands in the hotbar; a gate
- *   then simply wants the result: locked: { needs: 'grapple', ... }.
- *   Tapping two items with no recipe just switches the selection.
+ *   Both parts are consumed (list reusable ones in keeps: ['knife']) and
+ *   the result lands in the hotbar; a gate then simply wants the result:
+ *   locked: { needs: 'grapple', ... }.
+ *   window.COMBINE_HINT: voice line for a no-recipe pair; if unset,
+ *   tapping two unrelated items just switches the selection.
  *   ART: only icon_<makes>.gif (40x40) — the result never lies in a room.
  *
  * STORY FLAGS (optional, for cross-object logic — this is how a puzzle
@@ -69,10 +72,16 @@
  *          gate_<id>_open.gif    loops afterwards
  *          The prop lives ONLY in the cels, never in the background,
  *          and the last _use frame must match _open.
- *   item:  item_<id>.gif (in the room) + icon_<id>.gif (40x40 hotbar)
+ *   item:  item_<scene>_<id>.gif (full-frame cel of it in that room)
+ *          + icon_<id>.gif (40x40 hotbar; also the drag cursor)
  */
 
-window.COMBINE = [];
+window.COMBINE = [
+  { parts: ['stick', 'string'], makes: 'fishingrod' }
+];
+
+// played when two hotbar items have no recipe (remove to switch selection instead)
+window.COMBINE_HINT = 'vo_combine_wrong.wav';
 
 window.SCENES = {
 
@@ -126,7 +135,10 @@ window.SCENES = {
 
       { area: [300, 200, 500, 420],
         objAnim: 'obj_hallway_look_painting.gif', dur: 900,
-        sound: 'pickup.wav'}
+        sound: 'pickup.wav'},
+
+      { item: 'string', area: [510, 380, 620, 460],
+        anim: 'char_hallway_pick_string.gif', dur: 2000 }
     ]
   },
 
@@ -141,8 +153,33 @@ window.SCENES = {
         then: 'go:hallway',
         entryAnim: 'char_hallway_from_garden.gif', entryDur: 1400 },
 
-      { area: [400, 300, 600, 470],
-        anim: 'char_garden_look_fountain.gif', dur: 900 }
+      { item: 'stick', area: [190, 380, 300, 460],
+        anim: 'char_garden_pick_stick.gif', dur: 2000 },
+
+      { area: [400, 300, 600, 470], when: { flag: 'coinFished', value: false },
+        anim: 'char_garden_look_fountain.gif', dur: 900,
+        items: {
+          fishingrod: { anim: 'char_garden_fish.gif', dur: 2000,
+                        sound: 'pickup.wav',
+                        then: 'pick:coin', setFlag: 'coinFished' }
+        } },
+
+      { area: [400, 300, 600, 470], when: { flag: 'coinFished' },
+        anim: 'char_garden_look_fountain.gif', dur: 900,
+        items: {
+          fishingrod: { hint: 'vo_fountain_empty.wav', hintDur: 1100 }
+        } },
+
+      { gate: 'garden_gnome', area: [620, 320, 780, 470],
+        locked: {
+          needs: 'coin', dur: 2000, sound: 'pickup.wav',
+          hint: 'vo_gnome_wants.wav', hintDur: 3100,
+          setFlag: 'gnomePaid'
+        },
+        open: { sound: 'select.wav' } },
+
+      { item: 'medal', when: { flag: 'gnomePaid' }, area: [640, 410, 735, 470],
+        anim: 'char_garden_pick_medal.gif', dur: 2000 }
     ]
   }
 

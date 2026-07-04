@@ -444,7 +444,7 @@
     preload('icon_' + obj.item + '.gif');
     return {
       id: obj.item,
-      src: 'item_' + obj.item + '.gif',
+      src: 'item_' + current + '_' + obj.item + '.gif',
       area: obj.area, when: obj.when,
       anim: obj.anim, objAnim: obj.objAnim, dur: obj.dur,
       sound: obj.sound,
@@ -505,6 +505,9 @@
           hint: locked.hint, hintDur: locked.hintDur,
           failAnim: locked.failAnim, failDur: locked.failDur, failThen: locked.failThen,
           items: locked.items, cursor: locked.cursor,
+          keepItem: locked.keepItem,
+          setFlag: locked.setFlag, setFlagValue: locked.setFlagValue,
+          clearFlag: locked.clearFlag,
           setState: 'open'
         },
         open: openState
@@ -745,7 +748,7 @@
   function dispatch(h) {
     var action = h.then || '';
 
-    if (h.needs) consume(h.needs);
+    if (h.needs && !h.keepItem) consume(h.needs);
 
     if (h.setState && h.id) {
       objectStates[h.id] = h.setState;
@@ -841,8 +844,15 @@
   }
 
   function combineItems(combo) {
-    consume(combo.parts[0]);
-    consume(combo.parts[1]);
+    var keeps = combo.keeps || [];
+    for (var i = 0; i < 2; i++) {
+      var part = combo.parts[i];
+      var kept = false;
+      for (var j = 0; j < keeps.length; j++) {
+        if (keeps[j] === part) kept = true;
+      }
+      if (!kept) consume(part);
+    }
     if (!hasItem(combo.makes)) inv.push(combo.makes);
     spent[combo.makes] = true; // never re-pickable from a room
     eachFlag(combo.setFlag, function (f) { storyFlags[f] = true; });
@@ -858,6 +868,14 @@
         var combo = findCombo(selectedItem, itemId);
         if (combo) {
           combineItems(combo);
+          return;
+        }
+        // No recipe: with a COMBINE_HINT line, treat it as a failed
+        // combine; without one, just switch the selection.
+        if (window.COMBINE_HINT) {
+          selectedItem = null;
+          playSound(loadSound(window.COMBINE_HINT));
+          renderHotbar();
           return;
         }
       }
