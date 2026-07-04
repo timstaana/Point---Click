@@ -106,7 +106,12 @@ body {
   border: 0;
 }
 
-/* Hotbar — overlaps the bottom of the stage. */
+/* Hotbar — overlaps the bottom of the stage. translateZ gives it its
+   own compositing layer: iOS 8 (worst in home-screen standalone mode)
+   promotes the actively-painted canvas to a GPU layer and composites it
+   ABOVE plain siblings regardless of z-index. Safe now that hotbar art
+   is static PNGs (the old "don't promote layers" warning was about
+   animated GIF imgs, which are gone). */
 #hotbar {
   position: absolute;
   top: 480px;
@@ -115,6 +120,17 @@ body {
   height: 120px;
   pointer-events: none;
   z-index: 20;
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+  opacity: 1;
+  -webkit-transition: opacity 0.15s ease-out;
+  transition: opacity 0.15s ease-out;
+}
+
+/* While an animation plays (engine adds .busy to #game) the hotbar
+   dims to signal taps are ignored. */
+#game.busy #hotbar {
+  opacity: 0.45;
 }
 
 .hotbar-slot {
@@ -129,6 +145,32 @@ body {
   -webkit-box-sizing: border-box;
   -moz-box-sizing: border-box;
   box-sizing: border-box;
+}
+
+/* Build stamp — tiny version marker in the letterbox corner, for
+   spotting stale caches on devices. Tapping it toggles the debug
+   overlay (padding widens the tap target). */
+#build-stamp {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  padding: 14px;
+  font: 10px monospace;
+  color: #555;
+  z-index: 99;
+}
+
+/* On-device debug readout (audio state), toggled by the build stamp. */
+#debug-overlay {
+  position: fixed;
+  left: 4px;
+  bottom: 4px;
+  font: 10px monospace;
+  color: #7f7;
+  z-index: 99;
+  pointer-events: none;
+  white-space: pre;
+  text-align: left;
 }
 
 .hotbar-slot.selected {

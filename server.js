@@ -36,15 +36,27 @@ function serveFile(req, res) {
     var mime = MIME_TYPES[ext] || 'application/octet-stream';
     var lastMod = stats.mtime.toUTCString();
 
-    // Conditional GET: clients revalidate instead of re-downloading.
-    // (`no-cache` = "store it, but ask before reusing" — a 304 header
-    // exchange instead of a full transfer, and edits show up instantly.)
+    // Code files are never cached AT ALL (`no-store` + the legacy
+    // Pragma/Expires pair old iOS respects): the iOS home-screen web
+    // app shell caches far more stubbornly than Safari and will happily
+    // relaunch week-old JS. Assets (images/sounds) keep the cheaper
+    // policy: stored, but revalidated with a 304 header exchange.
+    var noStore = ext === '.html' || ext === '.js' || ext === '.css' || ext === '.json';
+    var cacheHeaders = noStore
+      ? {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      : {
+          'Cache-Control': 'no-cache',
+          'Last-Modified': lastMod
+        };
+
+    // Conditional GET for assets: revalidate instead of re-download.
     var ims = req.headers['if-modified-since'];
-    if (ims && !isNaN(Date.parse(ims)) && Date.parse(lastMod) <= Date.parse(ims)) {
-      res.writeHead(304, {
-        'Last-Modified': lastMod,
-        'Cache-Control': 'no-cache'
-      });
+    if (!noStore && ims && !isNaN(Date.parse(ims)) && Date.parse(lastMod) <= Date.parse(ims)) {
+      res.writeHead(304, cacheHeaders);
       res.end();
       return;
     }
@@ -61,25 +73,21 @@ function serveFile(req, res) {
         res.end();
         return;
       }
-      res.writeHead(206, {
+      res.writeHead(206, Object.assign({
         'Content-Type': mime,
         'Content-Length': end - start + 1,
         'Content-Range': 'bytes ' + start + '-' + end + '/' + stats.size,
-        'Accept-Ranges': 'bytes',
-        'Last-Modified': lastMod,
-        'Cache-Control': 'no-cache'
-      });
+        'Accept-Ranges': 'bytes'
+      }, cacheHeaders));
       fs.createReadStream(filePath, { start: start, end: end }).pipe(res);
       return;
     }
 
-    res.writeHead(200, {
+    res.writeHead(200, Object.assign({
       'Content-Type': mime,
       'Content-Length': stats.size,
-      'Accept-Ranges': 'bytes',
-      'Last-Modified': lastMod,
-      'Cache-Control': 'no-cache'
-    });
+      'Accept-Ranges': 'bytes'
+    }, cacheHeaders));
     fs.createReadStream(filePath).pipe(res);
   });
 }

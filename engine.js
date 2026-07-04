@@ -13,9 +13,12 @@
  * #hotbar, #cursor-layer (software cursor). Hotspots are plain
  * positioned divs — rectangles only (polygons use bounding box).
  *
- * Sound: ONE shared <audio> element. iOS only lets an element play if it
- * was started inside a user gesture, so the first tap "blesses" the
- * element; after that we just swap .src and play(). One sound at a time.
+ * Sound: Web Audio first — each room's WAVs are downloaded per scene
+ * (XHR) and decoded into memory buffers, so playback is instant with no
+ * network at play time. One shared <audio> element is the fallback for
+ * buffers still downloading / browsers without Web Audio; iOS only lets
+ * it play after being started inside a user gesture, so the first tap
+ * "blesses" both it and the AudioContext. One sound at a time.
  *
  * The stage is a fixed 800x600 design surface. The hotbar overlaps the
  * bottom of the stage. JS applies a transform scale on load / resize to
@@ -38,6 +41,44 @@
   var lastTouchTime = 0;
   var storyFlags = {};
   var objectStates = {};
+
+  // Bump when debugging stale caches on devices; shown in the letterbox
+  // corner so you can tell at a glance which build a device is running.
+  var BUILD = 'b3';
+
+  // iOS home-screen (standalone) mode: Web Audio there can pass every
+  // check (clock running, no errors) yet route no sound to the speaker,
+  // so standalone always uses the blessed <audio> element instead.
+  var IS_STANDALONE = !!(window.navigator && window.navigator.standalone);
+
+  /* ---------- on-device debug readout ----------
+   * No inspector reaches an iOS 8 home-screen app, so tapping the build
+   * stamp toggles a small overlay fed by setDebug() from the audio code. */
+  var debugEl = null;
+  var debugInfo = {};
+
+  function setDebug(key, value) {
+    debugInfo[key] = String(value);
+    if (!debugEl) return;
+    var lines = [];
+    for (var k in debugInfo) {
+      if (debugInfo.hasOwnProperty(k)) lines.push(k + ': ' + debugInfo[k]);
+    }
+    while (debugEl.firstChild) debugEl.removeChild(debugEl.firstChild);
+    debugEl.appendChild(document.createTextNode(lines.join('\n')));
+  }
+
+  function toggleDebug() {
+    if (debugEl) {
+      document.body.removeChild(debugEl);
+      debugEl = null;
+      return;
+    }
+    debugEl = document.createElement('div');
+    debugEl.id = 'debug-overlay';
+    document.body.appendChild(debugEl);
+    setDebug('build', BUILD + (IS_STANDALONE ? ' standalone' : ' browser'));
+  }
 
   var HOTBAR_SLOTS = 6;
   var DEFAULT_FAIL_ANIM = 'char_generic_cant_use.gif';
@@ -121,16 +162,22 @@
     return im;
   }
 
+  // Item icon cursors are created ahead of time (all item ids are known
+  // at init), so selecting an item never waits on a network round-trip.
+  function ensureItemCursor(id) {
+    if (cursorWrap && !cursorImgs['item:' + id]) {
+      addCursorImg('item:' + id, iconFor(id));
+    }
+  }
+
   function updateCursor() {
     if (!cursorWrap) return;
     var name = busy ? 'wait'
              : selectedItem ? 'item:' + selectedItem
              : (hoverCursor || 'default');
     if (name !== cursorName) {
-      if (!cursorImgs[name]) {
-        // first selection of this item: add its icon cursor, once ever
-        addCursorImg(name, iconFor(selectedItem));
-      }
+      if (selectedItem) ensureItemCursor(selectedItem); // safety net
+      if (!cursorImgs[name]) name = 'default';
       if (cursorImgs[cursorName]) cursorImgs[cursorName].style.display = 'none';
       cursorName = name;
       cursorImgs[name].style.display = 'block';
@@ -157,10 +204,21 @@
     hotbarEl     = document.getElementById('hotbar');
     initAudio();
     window.setInterval(tick, TICK_MS);
-    updateScale();
+    updateScaleSoon();
     initCursor();
+    // Create every item's icon cursor up front: item ids come from the
+    // scene pickups and the combine recipes.
+    var sn, oi, objs;
+    for (sn in scenes) {
+      if (!scenes.hasOwnProperty(sn)) continue;
+      objs = scenes[sn].objects || [];
+      for (oi = 0; oi < objs.length; oi++) {
+        if (objs[oi].item) ensureItemCursor(objs[oi].item);
+      }
+    }
     var combos = window.COMBINE || [];
     for (var ci = 0; ci < combos.length; ci++) {
+      ensureItemCursor(combos[ci].makes);
       preload(iconFor(combos[ci].makes));
       if (combos[ci].sound) warmSound(combos[ci].sound, null);
     }
@@ -172,6 +230,11 @@
     if (window.COMBINE_HINT) warmSound(window.COMBINE_HINT, null);
     initHotbar();
     renderHotbar();
+    var stamp = document.createElement('div');
+    stamp.id = 'build-stamp';
+    stamp.appendChild(document.createTextNode(BUILD));
+    document.body.appendChild(stamp);
+    addTap(stamp, toggleDebug);
     preloadScene(current, null, function () {
       enterScene(current, null, 0);
     });
@@ -183,8 +246,13 @@
   var GAME_H = 600;
 
   function updateScale() {
-    var vw = window.innerWidth;
-    var vh = window.innerHeight;
+    // documentElement.client* over window.inner*: iOS 8 home-screen
+    // (standalone) apps report stale innerWidth/innerHeight at launch
+    // and after rotation, which pushed the bottom of the stage (the
+    // hotbar) off screen.
+    var de = document.documentElement;
+    var vw = (de && de.clientWidth) || window.innerWidth;
+    var vh = (de && de.clientHeight) || window.innerHeight;
     currentScale = Math.min(vw / GAME_W, vh / GAME_H);
     gameEl.style.left = ((vw - GAME_W * currentScale) / 2) + 'px';
     gameEl.style.top  = ((vh - GAME_H * currentScale) / 2) + 'px';
@@ -192,6 +260,15 @@
     gameEl.style.webkitTransform = t;
     gameEl.style.MozTransform = t;
     gameEl.style.transform = t;
+  }
+
+  // iOS standalone settles its viewport some time after load/rotation
+  // without firing resize, so rescale again a few times to catch it.
+  function updateScaleSoon() {
+    updateScale();
+    window.setTimeout(updateScale, 250);
+    window.setTimeout(updateScale, 750);
+    window.setTimeout(updateScale, 1500);
   }
 
   /* ---------- input ---------- */
@@ -217,37 +294,102 @@
 
   var sfxEl = null;
   var audioUnlocked = false;
+  var audioCtx = null;
+  var ctxState = 'locked';  // locked -> testing -> ok
+  var rawSoundData = {};    // fileName -> raw bytes (kept for rebuilds)
+  var soundBuffers = {};    // fileName -> decoded AudioBuffer
+  var currentSource = null;
+
+  function createAudioCtx() {
+    if (audioCtx || IS_STANDALONE) return;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    try { audioCtx = new AC(); } catch (eAC) {}
+  }
+
+  function decodeSound(fileName, data) {
+    try {
+      // decode a copy: decodeAudioData can detach the buffer, and we
+      // may need the bytes again after a context rebuild
+      audioCtx.decodeAudioData(data.slice ? data.slice(0) : data, function (buf) {
+        soundBuffers[fileName] = buf;
+      }, function () {}); // undecodable: <audio> fallback plays it
+    } catch (eDec) {}
+  }
+
+  function decodeAllSounds() {
+    if (!audioCtx) return;
+    for (var f in rawSoundData) {
+      if (rawSoundData.hasOwnProperty(f) && !soundBuffers[f]) {
+        decodeSound(f, rawSoundData[f]);
+      }
+    }
+  }
 
   function initAudio() {
+    createAudioCtx();
     sfxEl = document.createElement('audio');
     sfxEl.preload = 'auto';
     document.body.appendChild(sfxEl);
-    // Bless the element on the first interaction so later
-    // setTimeout-driven plays (door, pickup, ...) are allowed on iOS.
-    // iOS 8 only credits some event types as a user gesture (touchend
-    // and click are the reliable ones), so listen to all of them and
-    // keep listening until an attempt verifiably succeeds.
-    function unlockHandler() {
-      unlockAudio();
-      if (audioUnlocked) {
-        document.removeEventListener('touchstart', unlockHandler, false);
-        document.removeEventListener('touchend', unlockHandler, false);
-        document.removeEventListener('mousedown', unlockHandler, false);
-        document.removeEventListener('click', unlockHandler, false);
-      }
-    }
+    sfxEl.onerror = function () {
+      setDebug('el-error', (sfxEl.error && sfxEl.error.code) || '?');
+    };
+    sfxEl.onplaying = function () {
+      setDebug('el-playing', sfxCurrent);
+    };
+    sfxEl.onstalled = function () {
+      setDebug('el-stalled', sfxCurrent);
+    };
+    // Unlock on interactions. iOS 8 only credits some event types as a
+    // user gesture (touchend and click are the reliable ones), so
+    // listen to all of them; the listeners stay attached for good —
+    // unlockAudio is a cheap no-op once everything is verified, and the
+    // Web Audio verify/rebuild cycle may need several gestures.
     if (document.addEventListener) {
-      document.addEventListener('touchstart', unlockHandler, false);
-      document.addEventListener('touchend', unlockHandler, false);
-      document.addEventListener('mousedown', unlockHandler, false);
-      document.addEventListener('click', unlockHandler, false);
+      document.addEventListener('touchstart', unlockAudio, false);
+      document.addEventListener('touchend', unlockAudio, false);
+      document.addEventListener('mousedown', unlockAudio, false);
+      document.addEventListener('click', unlockAudio, false);
       document.addEventListener('touchmove', function (evt) {
         if (evt.preventDefault) evt.preventDefault();
       }, false);
     }
   }
 
+  // iOS 8 standalone (home-screen) apps sometimes hand out a context
+  // that renders SILENTLY — no errors, but currentTime never advances.
+  // So: unlock with a silent buffer inside the gesture, then verify the
+  // clock is running; if not, scrap the context and let the next tap
+  // build a fresh one (buffers are re-decoded from the kept raw bytes).
+  function unlockWebAudio() {
+    createAudioCtx();
+    if (!audioCtx || ctxState === 'ok') return;
+    decodeAllSounds();
+    try {
+      if (audioCtx.resume) audioCtx.resume();
+      var s = audioCtx.createBufferSource();
+      s.buffer = audioCtx.createBuffer(1, 1, 22050);
+      s.connect(audioCtx.destination);
+      if (s.start) s.start(0); else s.noteOn(0);
+    } catch (eCtx) {}
+    if (ctxState === 'locked') {
+      ctxState = 'testing';
+      window.setTimeout(function () {
+        if (audioCtx && audioCtx.currentTime > 0) {
+          ctxState = 'ok';
+          return;
+        }
+        try { if (audioCtx && audioCtx.close) audioCtx.close(); } catch (eCl) {}
+        audioCtx = null;
+        soundBuffers = {};
+        ctxState = 'locked';
+        setDebug('ctx', 'dead, rebuilt on next tap');
+      }, 500);
+    }
+  }
+
   function unlockAudio() {
+    unlockWebAudio();
     if (audioUnlocked || !sfxEl) return;
     try {
       // A real sound already playing means a gesture was accepted.
@@ -264,13 +406,42 @@
         sfxEl.pause();
         try { sfxEl.currentTime = 0; } catch (e2) {}
       }
-    } catch (e) {}
+      setDebug('el-unlocked', audioUnlocked);
+    } catch (e) {
+      setDebug('unlock-error', e);
+    }
   }
 
   var sfxCurrent = null;
 
   function playFile(fileName) {
-    if (!fileName || !sfxEl) return;
+    if (!fileName) return;
+    // Web Audio path: decoded buffer plays instantly from memory.
+    // Only once the context is verified rendering (ctxState ok) — a
+    // silently-dead context would eat the sound with no error.
+    if (audioCtx && ctxState === 'ok' && soundBuffers[fileName]) {
+      try {
+        if (currentSource) {
+          try {
+            if (currentSource.stop) currentSource.stop(0);
+            else currentSource.noteOff(0);
+          } catch (eStop) {}
+          currentSource = null;
+        }
+        if (sfxEl && !sfxEl.paused) sfxEl.pause();
+        var src = audioCtx.createBufferSource();
+        src.buffer = soundBuffers[fileName];
+        src.connect(audioCtx.destination);
+        if (src.start) src.start(0); else src.noteOn(0);
+        currentSource = src;
+        setDebug('play', fileName + ' (webaudio t=' +
+                 Math.round(audioCtx.currentTime * 10) / 10 + ')');
+        return;
+      } catch (eCtx) {}
+    }
+    // Fallback: the single <audio> element (buffer still downloading,
+    // or no Web Audio support).
+    if (!sfxEl) return;
     try {
       sfxEl.pause();
       // Same file again (select.wav plays constantly): rewind and
@@ -278,13 +449,18 @@
       if (sfxCurrent === fileName && sfxEl.readyState > 0) {
         try { sfxEl.currentTime = 0; } catch (e2) {}
         sfxEl.play();
+        setDebug('play', fileName + ' (el rewind, paused=' + sfxEl.paused + ')');
         return;
       }
       sfxCurrent = fileName;
       sfxEl.src = 'sounds/' + fileName;
       sfxEl.load();
       sfxEl.play();
-    } catch (e) {}
+      setDebug('play', fileName + ' (el rs=' + sfxEl.readyState +
+               ' paused=' + sfxEl.paused + ')');
+    } catch (e) {
+      setDebug('play-error', fileName + ' ' + e);
+    }
   }
 
   // Resolve which file a named sfx should use for this hotspot:
@@ -517,8 +693,14 @@
     try {
       var xhr = new XMLHttpRequest();
       xhr.open('GET', 'sounds/' + fileName, true);
+      try { xhr.responseType = 'arraybuffer'; } catch (eRT) {}
       xhr.onreadystatechange = function () {
-        if (xhr.readyState === 4 && onDone) onDone();
+        if (xhr.readyState !== 4) return;
+        if (xhr.status === 200 && xhr.response && typeof xhr.response !== 'string') {
+          rawSoundData[fileName] = xhr.response; // kept for ctx rebuilds
+          if (audioCtx) decodeSound(fileName, xhr.response);
+        }
+        if (onDone) onDone();
       };
       xhr.send(null);
     } catch (e) {
@@ -1003,7 +1185,7 @@
   if (window.addEventListener) {
     window.addEventListener('load', init, false);
     window.addEventListener('resize', updateScale, false);
-    window.addEventListener('orientationchange', updateScale, false);
+    window.addEventListener('orientationchange', updateScaleSoon, false);
   } else {
     window.attachEvent('onload', init);
     window.attachEvent('onresize', updateScale);
