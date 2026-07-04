@@ -4,6 +4,6 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "generate-certs": "mkdir -p certs && openssl req -x509 -newkey rsa:2048 -nodes -keyout certs/localhost.key -out certs/localhost.crt -days 365 -subj '/CN=localhost'"
+    "generate-certs": "mkdir -p certs && LAN_IP=$(ipconfig getifaddr en0 || ipconfig getifaddr en1 || echo 127.0.0.1) && openssl req -x509 -newkey rsa:2048 -nodes -keyout certs/localhost.key -out certs/localhost.crt -days 365 -subj '/CN=localhost' -addext \"subjectAltName=DNS:localhost,IP:127.0.0.1,IP:$LAN_IP\""
   }
 }

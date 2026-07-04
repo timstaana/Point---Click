@@ -7,20 +7,19 @@
  *   bg -> item cels -> object overlay -> character
  * Authoring stays animated GIFs; a build step (make_sheets.py) flattens
  * each stage GIF into a PNG frame-strip + images/sheets.js manifest
- * (frames / per-frame ms / loop). The engine owns the animation clock,
- * so clips restart deterministically (no ?t= cache-buster reloads).
- * Small UI art (hotbar icons, cursors, hint button) stays as GIF <img>s.
+ * (frames / per-frame ms / loop). The engine owns the animation clock.
  *
- * DOM: #stage-canvas, #hotspot-layer (transparent clickable SVGs),
- * #hotbar, #hint-button, #cursor-layer.
+ * DOM: #stage-canvas, #hotspot-layer (transparent clickable divs),
+ * #hotbar, #cursor-layer (software cursor). Hotspots are plain
+ * positioned divs — rectangles only (polygons use bounding box).
  *
- * Interaction model:
- *   - Tap a hotspot to play its char clip, then dispatch (go / pick).
- *   - Tap an inventory item to select it, then tap a matching hotspot.
+ * Sound: ONE shared <audio> element. iOS only lets an element play if it
+ * was started inside a user gesture, so the first tap "blesses" the
+ * element; after that we just swap .src and play(). One sound at a time.
  *
  * The stage is a fixed 800x600 design surface. The hotbar overlaps the
- * bottom of the stage rather than increasing the game area. JS applies a
- * scale on load / resize to fit the viewport (aspect ratio preserved).
+ * bottom of the stage. JS applies a transform scale on load / resize to
+ * fit the viewport (aspect ratio preserved).
  */
 
 (function () {
@@ -34,27 +33,34 @@
   var spent = {};
   var selectedItem = null;
 
-  var gameEl, stageEl, canvasEl, ctx, hotspotLayer, hotbarEl;
+  var gameEl, canvasEl, ctx, hotspotLayer, hotbarEl;
   var currentScale = 1;
   var currentTx = 0;
   var currentTy = 0;
   var lastTouchTime = 0;
   var storyFlags = {};
   var objectStates = {};
-  var hintMode = false;
-  var hintBtnEl = null;
-  var soundCache = {};
-  var currentSounds = {};
 
   var HOTBAR_SLOTS = 6;
   var DEFAULT_FAIL_ANIM = 'char_generic_cant_use.gif';
+  var DEFAULT_SOUNDS = {
+    select: 'select.wav',
+    pickup: 'pickup.wav',
+    door: 'door.wav',
+    fail: 'fail.wav'
+  };
+
+  function iconFor(itemId) {
+    var meta = items[itemId] || {};
+    return meta.icon || 'icon_' + itemId + '.png';
+  }
 
   /* ---------- software cursor ----------
-   * CSS url() cursors can't animate GIFs, so the native cursor is hidden
-   * inside #game and a 40x40 <img> (same size as icons) follows the mouse.
-   * It lives in game coordinates, so it scales with the art. While an
-   * inventory item is selected, the cursor is that item's icon. Touch
-   * devices never move it (and taps explicitly hide it).
+   * The native cursor is hidden inside #game (CSS) and a 40x40 <img>
+   * follows the mouse instead. It lives in game coordinates, so it
+   * scales with the art. Busy shows 'wait'; while an inventory item is
+   * selected the cursor is that item's icon; hotspots set 'point' (or
+   * their own `cursor` name) on hover. Touch devices never show it.
    * Cursor name -> hotspot px (anything else centres): */
   var CURSORS = {
     'default': [2, 1],
@@ -77,8 +83,8 @@
     cursorEl.id = 'cursor-layer';
     cursorEl.style.display = 'none';
     gameEl.appendChild(cursorEl);
-    var onMove = function (evt) {
-      evt = evt || window.event;
+    if (!window.addEventListener) return;
+    window.addEventListener('mousemove', function (evt) {
       if (Date.now() - lastTouchTime < 1000) return; // synthesized after a tap
       // Game coordinates, unclamped: #game doesn't clip, so the cursor
       // follows into the letterbox area outside the 800x600 canvas too.
@@ -86,26 +92,17 @@
       cursorY = (evt.clientY - currentTy) / currentScale;
       cursorEl.style.display = 'block';
       positionCursor();
-    };
-    var onOut = function (evt) {
-      evt = evt || window.event;
+    }, false);
+    document.addEventListener('mouseout', function (evt) {
       // hide only when the mouse leaves the window entirely
       if (!(evt.relatedTarget || evt.toElement)) {
         cursorEl.style.display = 'none';
       }
-    };
-    var onTouch = function () {
+    }, false);
+    window.addEventListener('touchstart', function () {
       lastTouchTime = Date.now();
       cursorEl.style.display = 'none';
-    };
-    if (window.addEventListener) {
-      window.addEventListener('mousemove', onMove, false);
-      document.addEventListener('mouseout', onOut, false);
-      window.addEventListener('touchstart', onTouch, false);
-    } else if (document.attachEvent) {
-      document.attachEvent('onmousemove', onMove);
-      document.attachEvent('onmouseout', onOut);
-    }
+    }, false);
     updateCursor();
   }
 
@@ -113,11 +110,6 @@
     var hs = CURSORS[cursorName] || [20, 20];
     cursorEl.style.left = (cursorX - hs[0]) + 'px';
     cursorEl.style.top  = (cursorY - hs[1]) + 'px';
-  }
-
-  function iconFor(itemId) {
-    var meta = items[itemId] || {};
-    return meta.icon || 'icon_' + itemId + '.png';
   }
 
   function updateCursor() {
@@ -134,46 +126,27 @@
     positionCursor();
   }
 
-  // #game carries state classes for the cursor/busy/hint styling:
-  //   .busy  — an animation is playing (wait cursor, dimmed hotbar)
-  //   .using — an inventory item is selected (item icon cursor)
-  //   .hints — hotspot outlines are shown (per room, reset on entry)
-  function updateGameClasses() {
-    if (!gameEl) return;
-    var cls = [];
-    if (busy) cls.push('busy');
-    if (selectedItem) cls.push('using');
-    if (hintMode) cls.push('hints');
-    gameEl.className = cls.join(' ');
-    if (hintBtnEl) {
-      hintBtnEl.src = 'images/' + (hintMode ? 'ui_hint_on.png' : 'ui_hint.png');
-    }
-    updateCursor();
+  function addHover(el, name) {
+    el.onmouseover = function () { hoverCursor = name; updateCursor(); };
+    el.onmouseout  = function () { hoverCursor = null; updateCursor(); };
   }
 
   function setBusy(b) {
     busy = b;
-    updateGameClasses();
+    if (gameEl) gameEl.className = busy ? 'busy' : '';
+    updateCursor();
   }
-  var DEFAULT_SOUNDS = {
-    select: 'select.wav',
-    pickup: 'pickup.wav',
-    door: 'door.wav',
-    fail: 'fail.wav'
-  };
 
   function init() {
     gameEl       = document.getElementById('game');
-    stageEl      = document.getElementById('stage');
     canvasEl     = document.getElementById('stage-canvas');
     ctx          = canvasEl.getContext('2d');
     hotspotLayer = document.getElementById('hotspot-layer');
     hotbarEl     = document.getElementById('hotbar');
-    installAudioUnlocker();
+    initAudio();
     window.setInterval(tick, TICK_MS);
     updateScale();
     initCursor();
-    initHintButton();
     var combos = window.COMBINE || [];
     for (var ci = 0; ci < combos.length; ci++) {
       preload(iconFor(combos[ci].makes));
@@ -184,7 +157,6 @@
 
   /* ---------- responsive scaling ---------- */
 
-  // Game canvas is 800 x 600. The hotbar overlaps the bottom of the stage.
   var GAME_W = 800;
   var GAME_H = 600;
 
@@ -192,35 +164,22 @@
     var vw = window.innerWidth;
     var vh = window.innerHeight;
     currentScale = Math.min(vw / GAME_W, vh / GAME_H);
-    var tx = (vw - GAME_W * currentScale) / 2;
-    var ty = (vh - GAME_H * currentScale) / 2;
-    currentTx = tx;
-    currentTy = ty;
-    // zoom scales through layout, which keeps image-rendering (crisp
-    // pixels) working on desktop WebKit — but on iOS every animated GIF
-    // frame then repaints the whole zoomed subtree in software, which
-    // flashes constantly on the iPad. Touch devices get transform (GPU
-    // composited, slight smoothing on a non-retina panel); desktop
-    // WebKit gets zoom; Gecko gets transform + -moz-crisp-edges.
-    var useZoom = typeof gameEl.style.zoom !== 'undefined' &&
-                  !('ontouchstart' in window);
-    if (useZoom) {
-      // zoom multiplies the element's own lengths too, hence the division
-      gameEl.style.zoom = currentScale;
-      gameEl.style.left = (tx / currentScale) + 'px';
-      gameEl.style.top  = (ty / currentScale) + 'px';
-    } else {
-      gameEl.style.left = tx + 'px';
-      gameEl.style.top  = ty + 'px';
-      gameEl.style.transform = 'scale(' + currentScale + ')';
-      gameEl.style.webkitTransform = 'scale(' + currentScale + ')';
-    }
+    currentTx = (vw - GAME_W * currentScale) / 2;
+    currentTy = (vh - GAME_H * currentScale) / 2;
+    gameEl.style.left = currentTx + 'px';
+    gameEl.style.top  = currentTy + 'px';
+    var t = 'scale(' + currentScale + ')';
+    gameEl.style.webkitTransform = t;
+    gameEl.style.MozTransform = t;
+    gameEl.style.transform = t;
   }
+
+  /* ---------- input ---------- */
 
   function addTap(el, fn) {
     el.onclick = function (evt) {
       if (evt && evt.preventDefault) evt.preventDefault();
-      if (Date.now() - lastTouchTime < 500) return false;
+      if (Date.now() - lastTouchTime < 500) return false; // ghost click
       unlockAudio();
       fn(evt);
       return false;
@@ -234,128 +193,88 @@
     };
   }
 
-  var soundContainer = null;
+  /* ---------- sound ---------- */
+
+  var sfxEl = null;
   var audioUnlocked = false;
 
-  function initSoundContainer() {
-    if (!soundContainer) {
-      soundContainer = document.createElement('div');
-      soundContainer.style.display = 'none';
-      document.body.appendChild(soundContainer);
+  function initAudio() {
+    sfxEl = document.createElement('audio');
+    sfxEl.preload = 'auto';
+    document.body.appendChild(sfxEl);
+    // Bless the element on the first interaction so later
+    // setTimeout-driven plays (door, pickup, ...) are allowed on iOS.
+    // iOS 8 only credits some event types as a user gesture (touchend
+    // and click are the reliable ones), so listen to all of them and
+    // keep listening until an attempt verifiably succeeds.
+    function unlockHandler() {
+      unlockAudio();
+      if (audioUnlocked) {
+        document.removeEventListener('touchstart', unlockHandler, false);
+        document.removeEventListener('touchend', unlockHandler, false);
+        document.removeEventListener('mousedown', unlockHandler, false);
+        document.removeEventListener('click', unlockHandler, false);
+      }
     }
-  }
-
-  function loadSceneSounds(scene) {
-    var defaults = window.SOUNDS || DEFAULT_SOUNDS;
-    currentSounds = {
-      select: (scene.sounds && scene.sounds.select) || defaults.select,
-      pickup: (scene.sounds && scene.sounds.pickup) || defaults.pickup,
-      door:   (scene.sounds && scene.sounds.door)   || defaults.door,
-      fail:   (scene.sounds && scene.sounds.fail)   || defaults.fail
-    };
-  }
-
-  function getSoundFile(name, h) {
-    if (h) {
-      if (name === 'fail') return h.failSound || currentSounds.fail;
-      var key = name + 'Sound';
-      if (h[key]) return h[key];
-      if (h.sound) return h.sound;
+    if (document.addEventListener) {
+      document.addEventListener('touchstart', unlockHandler, false);
+      document.addEventListener('touchend', unlockHandler, false);
+      document.addEventListener('mousedown', unlockHandler, false);
+      document.addEventListener('click', unlockHandler, false);
+      document.addEventListener('touchmove', function (evt) {
+        if (evt.preventDefault) evt.preventDefault();
+      }, false);
     }
-    return currentSounds[name];
-  }
-
-  function createAudioElement(fileName) {
-    if (!fileName) return null;
-    var audio = document.createElement('audio');
-    audio.setAttribute('playsinline', '');
-    audio.setAttribute('webkit-playsinline', '');
-    audio.preload = 'auto';
-    audio.src = 'sounds/' + fileName;
-    if (soundContainer) {
-      soundContainer.appendChild(audio);
-    }
-    return audio;
-  }
-
-  function loadSound(fileName) {
-    if (!fileName) return null;
-    if (soundCache[fileName]) return soundCache[fileName];
-    var audio = createAudioElement(fileName);
-    soundCache[fileName] = audio;
-    return audio;
-  }
-
-  function playSceneSound(name, h) {
-    playSound(loadSound(getSoundFile(name, h)));
-  }
-
-  function playSound(sound) {
-    if (!sound || !sound.play) return;
-    try {
-      sound.pause();
-      sound.currentTime = 0;
-      sound.play();
-    } catch (e) {
-      try { sound.play(); } catch (ignore) {}
-    }
-  }
-
-  function collectSoundFiles() {
-    var seen = {};
-    var list = [];
-    function add(f) {
-      if (f && typeof f === 'string' && !seen[f]) { seen[f] = true; list.push(f); }
-    }
-    var d = window.SOUNDS || DEFAULT_SOUNDS;
-    for (var k in d) { if (d.hasOwnProperty(k)) add(d[k]); }
-    add(window.COMBINE_HINT);
-    var combos = window.COMBINE || [];
-    for (var i = 0; i < combos.length; i++) add(combos[i].sound);
-    var str = '';
-    try { str = JSON.stringify(window.SCENES); } catch (e) {}
-    var found = str.match(/[\w\-]+\.wav/g) || [];
-    for (i = 0; i < found.length; i++) add(found[i]);
-    return list;
   }
 
   function unlockAudio() {
-    if (audioUnlocked) return;
-    audioUnlocked = true;
-    initSoundContainer();
-    var files = collectSoundFiles();
-    for (var i = 0; i < files.length; i++) {
-      var a = loadSound(files[i]);
-      if (!a || !a.play) continue;
-      try {
-        a.pause();
-        a.currentTime = 0;
-        a.play();
-        a.pause();
-        a.currentTime = 0;
-      } catch (e) {}
-    }
+    if (audioUnlocked || !sfxEl) return;
+    try {
+      // A real sound already playing means a gesture was accepted.
+      if (!sfxEl.paused) { audioUnlocked = true; return; }
+      sfxEl.src = 'sounds/' + DEFAULT_SOUNDS.select;
+      sfxEl.load();
+      sfxEl.play();
+      // On old WebKit, paused flips to false synchronously only when
+      // play() is accepted; if the gesture was rejected it stays true
+      // and we retry on the next interaction.
+      if (!sfxEl.paused) {
+        audioUnlocked = true;
+        sfxEl.pause();
+        try { sfxEl.currentTime = 0; } catch (e2) {}
+      }
+    } catch (e) {}
   }
 
-  function preventTouchScroll(evt) {
-    if (!evt) return;
-    if (evt.preventDefault) evt.preventDefault();
-    return false;
+  function playFile(fileName) {
+    if (!fileName || !sfxEl) return;
+    try {
+      sfxEl.pause();
+      sfxEl.src = 'sounds/' + fileName;
+      sfxEl.load();
+      sfxEl.play();
+    } catch (e) {}
   }
 
-  function installAudioUnlocker() {
-    function unlockOnce(evt) {
-      unlockAudio();
-      document.removeEventListener('touchstart', unlockOnce, false);
-      document.removeEventListener('touchend', unlockOnce, false);
-      document.removeEventListener('mousedown', unlockOnce, false);
-      document.removeEventListener('click', unlockOnce, false);
+  // Resolve which file a named sfx should use for this hotspot:
+  // hotspot override -> scene override -> global default.
+  function sfxFile(name, h) {
+    if (h) {
+      if (name === 'fail') {
+        if (h.failSound) return h.failSound;
+      } else {
+        if (h[name + 'Sound']) return h[name + 'Sound'];
+        if (h.sound) return h.sound;
+      }
     }
-    document.addEventListener('touchstart', unlockOnce, false);
-    document.addEventListener('touchend', unlockOnce, false);
-    document.addEventListener('mousedown', unlockOnce, false);
-    document.addEventListener('click', unlockOnce, false);
-    document.addEventListener('touchmove', preventTouchScroll, false);
+    var scene = scenes[current] || {};
+    if (scene.sounds && scene.sounds[name]) return scene.sounds[name];
+    var defaults = window.SOUNDS || {};
+    return defaults[name] || DEFAULT_SOUNDS[name];
+  }
+
+  function playSfx(name, h) {
+    playFile(sfxFile(name, h));
   }
 
   /* ---------- canvas channels & animation clock ---------- */
@@ -403,7 +322,7 @@
   }
 
   // One string describing what this tick would paint; repaint only when
-  // it changes, so idle costs nothing between GIF-frame boundaries.
+  // it changes, so idle costs nothing between frame boundaries.
   function paintKey(now) {
     var parts = [];
     function add(c) {
@@ -439,27 +358,10 @@
 
   /* ---------- scene lifecycle ---------- */
 
-  function initHintButton() {
-    var btn = document.getElementById('hint-button');
-    if (!btn) return;
-    hintBtnEl = btn;
-    preload('ui_hint_on.png');
-    addTap(btn, function () {
-      hintMode = !hintMode;
-      playSceneSound('select');
-      updateGameClasses();
-    });
-    btn.onmouseover = function () { hoverCursor = 'point'; updateCursor(); };
-    btn.onmouseout  = function () { hoverCursor = null; updateCursor(); };
-  }
-
   function enterScene(name, entryAnim, entryDur) {
     current = name;
-    hintMode = false; // hints are per room
-    updateGameClasses();
     var scene = scenes[name];
     swapBg(scene.bg);
-    loadSceneSounds(scene);
     clearObject();
     clearItems();
     clearHotspots();
@@ -478,24 +380,10 @@
 
   function showIdle() {
     var scene = scenes[current];
-    // all channel changes land in the same tick, so the swap is atomic —
-    // no load races, no flash between overlay end and new state sprite
+    // all channel changes land in the same tick, so the swap is atomic
     clearObject();
     swapChar(scene.idle);
     renderSceneObjects(scene);
-  }
-
-  /* ---------- scene items ---------- */
-
-  function renderItems(list) {
-    clearItems();
-    if (!list) return;
-    for (var i = 0; i < list.length; i++) {
-      var it = list[i];
-      if (!itemMatches(it) || hasItem(it.id) || spent[it.id]) continue;
-      channels.items.push(makeClip(it.src));
-    }
-    requestPaint();
   }
 
   /* ---------- story-flag conditions ----------
@@ -530,9 +418,7 @@
     return condMatches(when);
   }
 
-  function itemMatches(it) {
-    return whenMatches(it.when);
-  }
+  /* ---------- scene objects ---------- */
 
   function clearItems() {
     channels.items = [];
@@ -540,17 +426,24 @@
   }
 
   function renderSceneObjects(scene) {
-    if (scene.objects) {
-      renderObjects(scene.objects);
-    } else {
-      renderItems(scene.items);
-      renderHotspots(scene.hotspots);
+    renderObjects(scene.objects);
+  }
+
+  var preloaded = {};
+  function preload(fileName) {
+    if (!fileName || preloaded[fileName]) return;
+    preloaded[fileName] = true;
+    if (window.SHEETS && window.SHEETS[fileName]) {
+      getSheet(fileName); // stage art: warm the PNG strip
+      return;
     }
+    var im = new Image();
+    im.src = 'images/' + fileName; // UI art: plain PNG
   }
 
   // Pickups: shorthand for "an item lying in the room". Art is two files
   // named after the item id:
-  //   item_<id>.gif (full-frame cel) / icon_<id>.gif (40x40 hotbar icon)
+  //   item_<scene>_<id>.gif (full-frame cel) / icon_<id>.png (40x40 icon)
   function expandItem(obj) {
     if (!obj.item) return obj;
     preload(iconFor(obj.item));
@@ -568,22 +461,6 @@
     };
   }
 
-  // Gates: shorthand for "blocked until the right item is used" (locked
-  // door, NPC who wants something, ...). Expands to a two-state object;
-  // art is three full-frame cels named after the gate id:
-  //   gate_<id>_closed.gif / gate_<id>_use.gif / gate_<id>_open.gif
-  var preloaded = {};
-  function preload(fileName) {
-    if (!fileName || preloaded[fileName]) return;
-    preloaded[fileName] = true;
-    if (window.SHEETS && window.SHEETS[fileName]) {
-      getSheet(fileName); // stage art: warm the PNG strip
-      return;
-    }
-    var im = new Image();
-    im.src = 'images/' + fileName; // UI art: plain GIF
-  }
-
   // Authoring sugar: `hint`/`hintDur` are the friendly names for a
   // rejection voice line; the fail path reads failSound/failDur.
   function normalizeAction(o) {
@@ -594,6 +471,10 @@
     return o;
   }
 
+  // Gates: shorthand for "blocked until the right item is used" (locked
+  // door, NPC who wants something, ...). Expands to a two-state object;
+  // art is three full-frame cels named after the gate id:
+  //   gate_<id>_closed.gif / gate_<id>_use.gif / gate_<id>_open.gif
   function expandGate(obj) {
     if (!obj.gate) return obj;
     var stem = 'gate_' + obj.gate;
@@ -656,7 +537,7 @@
     if (!list) return;
     for (var i = 0; i < list.length; i++) {
       var obj = normalizeAction(resolveObject(expandGate(expandItem(list[i]))));
-      if (!objectMatches(obj) || isObjectSpent(obj)) continue;
+      if (!whenMatches(obj.when) || isObjectSpent(obj)) continue;
       if (obj.src) {
         channels.items.push(makeClip(obj.src));
       }
@@ -665,10 +546,6 @@
       }
     }
     requestPaint();
-  }
-
-  function objectMatches(obj) {
-    return whenMatches(obj.when);
   }
 
   function isObjectSpent(obj) {
@@ -682,90 +559,32 @@
 
   /* ---------- hotspots ---------- */
 
-  function renderHotspots(hotspots) {
-    clearHotspots();
-    for (var i = 0; i < hotspots.length; i++) {
-      var h = hotspots[i];
-      if (!hotspotMatches(h) || isHotspotSpent(h)) continue;
-      hotspotLayer.appendChild(makeHotspotEl(h));
-    }
-  }
-
-  function hotspotMatches(h) {
-    return whenMatches(h.when);
-  }
-
-  // A pick-hotspot is spent once its item is in inventory (or was consumed).
-  function isHotspotSpent(h) {
-    if (h.then && h.then.indexOf('pick:') === 0) {
-      var id = h.then.substring(5);
-      if (hasItem(id)) return true;
-      if (spent[id]) return true;
-    }
-    return false;
-  }
-
   function clearHotspots() {
     while (hotspotLayer.firstChild) hotspotLayer.removeChild(hotspotLayer.firstChild);
     hoverCursor = null; // mouseout never fires for removed elements
     updateCursor();
   }
 
-  function makePolygonHotspot(h) {
-    var points = h.area || [];
-    if (points.length === 4) {
-      points = [points[0], points[1], points[2], points[1], points[2], points[3], points[0], points[3]];
-    }
-    if (!points || points.length < 6) {
-      return document.createElement('a');
-    }
-
-    var minX = points[0];
-    var minY = points[1];
-    var maxX = points[0];
-    var maxY = points[1];
-
-    for (var i = 2; i < points.length; i += 2) {
-      var x = points[i];
-      var y = points[i + 1];
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-    }
-
-    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('class', 'hotspot hotspot-svg');
-    svg.setAttribute('viewBox', '0 0 ' + (maxX - minX) + ' ' + (maxY - minY));
-    svg.setAttribute('width', maxX - minX);
-    svg.setAttribute('height', maxY - minY);
-    svg.style.position = 'absolute';
-    svg.style.left = minX + 'px';
-    svg.style.top = minY + 'px';
-
-    var relPoints = [];
-    for (var j = 0; j < points.length; j += 2) {
-      relPoints.push(points[j] - minX);
-      relPoints.push(points[j + 1] - minY);
-    }
-
-    var poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-    poly.setAttribute('points', relPoints.join(' '));
-    poly.setAttribute('fill', 'transparent');
-    poly.style.pointerEvents = 'all';
-    addTap(poly, function () { handleClick(h); });
-    poly.onmouseover = function () { hoverCursor = h.cursor || 'point'; updateCursor(); };
-    poly.onmouseout  = function () { hoverCursor = null; updateCursor(); };
-    svg.appendChild(poly);
-    return svg;
-  }
-
+  // area: [x1,y1,x2,y2] rectangle; longer polygon lists just use their
+  // bounding box. Plain divs — no SVG, no extra layers.
   function makeHotspotEl(h) {
-    return makePolygonHotspot(h);
-  }
-
-  function getHotspotObjAnim(h) {
-    return h.objAnim;
+    var a = h.area || [0, 0, 0, 0];
+    var minX = a[0], minY = a[1], maxX = a[2], maxY = a[3];
+    for (var i = 4; i + 1 < a.length; i += 2) {
+      if (a[i] < minX) minX = a[i];
+      if (a[i] > maxX) maxX = a[i];
+      if (a[i + 1] < minY) minY = a[i + 1];
+      if (a[i + 1] > maxY) maxY = a[i + 1];
+    }
+    var el = document.createElement('div');
+    el.className = 'hotspot';
+    el.style.left = minX + 'px';
+    el.style.top = minY + 'px';
+    el.style.width = (maxX - minX) + 'px';
+    el.style.height = (maxY - minY) + 'px';
+    addTap(el, function () { handleClick(h); });
+    addHover(el, h.cursor || 'point');
+    return el;
   }
 
   /* ---------- click and dispatch ---------- */
@@ -825,10 +644,9 @@
     setBusy(true);
     clearHotspots();
     if (!h.then && h.sound) {
-      playSceneSound('select', h);
+      playSfx('select', h);
     }
-    var objAnim = getHotspotObjAnim(h);
-    if (objAnim) swapObject(objAnim);
+    if (h.objAnim) swapObject(h.objAnim);
     if (h.anim) swapChar(h.anim);
     window.setTimeout(function () {
       setBusy(false);
@@ -839,7 +657,7 @@
   function triggerWrongItem(h, itemId) {
     selectedItem = null;
     renderHotbar();
-    playSceneSound('fail', h);
+    playSfx('fail', h);
     var scene = scenes[current] || {};
     var failAnim = h.failAnim || scene.failAnim || DEFAULT_FAIL_ANIM;
     var failDur  = h.failDur  || scene.failDur  || 900;
@@ -875,7 +693,7 @@
     eachFlag(h.clearFlag, function (f) { delete storyFlags[f]; });
 
     if (action.indexOf('go:') === 0) {
-      playSceneSound('door', h);
+      playSfx('door', h);
       enterScene(action.substring(3), h.entryAnim, h.entryDur || 1200);
       return;
     }
@@ -885,7 +703,7 @@
       if (!hasItem(item)) {
         inv.push(item);
         renderHotbar();
-        playSceneSound('pickup', h);
+        playSfx('pickup', h);
       }
       spent[item] = true;
       showIdle();
@@ -915,7 +733,7 @@
   //   slot width 90px, padding 40px each side, gap (720 - 6*90)/5 = 36px
   //   => left(i) = 40 + i * (90 + 36) = 40 + i * 126
   function renderHotbar() {
-    updateGameClasses();
+    updateCursor(); // selection may have changed
     while (hotbarEl.firstChild) hotbarEl.removeChild(hotbarEl.firstChild);
     for (var i = 0; i < HOTBAR_SLOTS; i++) {
       var slot = document.createElement('div');
@@ -923,13 +741,11 @@
       slot.style.left = (40 + i * 126) + 'px';
       if (i < inv.length) {
         var id = inv[i];
-        var meta = items[id] || {};
         var img = document.createElement('img');
         img.src = 'images/' + iconFor(id);
         img.className = 'hotbar-icon';
         addTap(img, makeHotbarTapHandler(id));
-        img.onmouseover = function () { hoverCursor = 'point'; updateCursor(); };
-        img.onmouseout  = function () { hoverCursor = null; updateCursor(); };
+        addHover(img, 'point');
         if (id === selectedItem) {
           slot.className += ' selected';
         }
@@ -969,7 +785,7 @@
     spent[combo.makes] = true; // never re-pickable from a room
     eachFlag(combo.setFlag, function (f) { storyFlags[f] = true; });
     selectedItem = null;
-    playSound(loadSound(combo.sound || getSoundFile('pickup')));
+    playFile(combo.sound || sfxFile('pickup'));
     renderHotbar();
   }
 
@@ -986,13 +802,13 @@
         // combine; without one, just switch the selection.
         if (window.COMBINE_HINT) {
           selectedItem = null;
-          playSound(loadSound(window.COMBINE_HINT));
+          playFile(window.COMBINE_HINT);
           renderHotbar();
           return;
         }
       }
       selectedItem = (selectedItem === itemId) ? null : itemId;
-      playSceneSound('select');
+      playSfx('select');
       renderHotbar();
     };
   }
