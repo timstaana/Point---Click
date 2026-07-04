@@ -169,6 +169,7 @@
     ctx          = canvasEl.getContext('2d');
     hotspotLayer = document.getElementById('hotspot-layer');
     hotbarEl     = document.getElementById('hotbar');
+    installAudioUnlocker();
     window.setInterval(tick, TICK_MS);
     updateScale();
     initCursor();
@@ -233,16 +234,14 @@
     };
   }
 
-  function createSound(fileName) {
-    if (!fileName || (typeof window.Audio !== 'function' && typeof window.Audio !== 'object')) {
-      return null;
-    }
-    try {
-      var audio = new Audio('sounds/' + fileName);
-      audio.preload = 'auto';
-      return audio;
-    } catch (e) {
-      return null;
+  var soundContainer = null;
+  var audioUnlocked = false;
+
+  function initSoundContainer() {
+    if (!soundContainer) {
+      soundContainer = document.createElement('div');
+      soundContainer.style.display = 'none';
+      document.body.appendChild(soundContainer);
     }
   }
 
@@ -258,7 +257,6 @@
 
   function getSoundFile(name, h) {
     if (h) {
-      // fail must never fall back to the object's success sound
       if (name === 'fail') return h.failSound || currentSounds.fail;
       var key = name + 'Sound';
       if (h[key]) return h[key];
@@ -267,11 +265,25 @@
     return currentSounds[name];
   }
 
+  function createAudioElement(fileName) {
+    if (!fileName) return null;
+    var audio = document.createElement('audio');
+    audio.setAttribute('playsinline', '');
+    audio.setAttribute('webkit-playsinline', '');
+    audio.preload = 'auto';
+    audio.src = 'sounds/' + fileName;
+    if (soundContainer) {
+      soundContainer.appendChild(audio);
+    }
+    return audio;
+  }
+
   function loadSound(fileName) {
     if (!fileName) return null;
     if (soundCache[fileName]) return soundCache[fileName];
-    soundCache[fileName] = createSound(fileName);
-    return soundCache[fileName];
+    var audio = createAudioElement(fileName);
+    soundCache[fileName] = audio;
+    return audio;
   }
 
   function playSceneSound(name, h) {
@@ -281,19 +293,13 @@
   function playSound(sound) {
     if (!sound || !sound.play) return;
     try {
+      sound.pause();
       sound.currentTime = 0;
       sound.play();
     } catch (e) {
       try { sound.play(); } catch (ignore) {}
     }
   }
-
-  /* ---------- iOS audio unlock ----------
-   * iOS only allows an Audio element's FIRST play() inside a user
-   * gesture. Sounds fired from setTimeout (door, pickup after a clip)
-   * would stay silent, so on the first touch/click we prime every wav
-   * the game references (play+pause inside the gesture unlocks it). */
-  var audioUnlocked = false;
 
   function collectSoundFiles() {
     var seen = {};
@@ -316,16 +322,40 @@
   function unlockAudio() {
     if (audioUnlocked) return;
     audioUnlocked = true;
+    initSoundContainer();
     var files = collectSoundFiles();
     for (var i = 0; i < files.length; i++) {
       var a = loadSound(files[i]);
       if (!a || !a.play) continue;
       try {
+        a.pause();
+        a.currentTime = 0;
         a.play();
         a.pause();
         a.currentTime = 0;
       } catch (e) {}
     }
+  }
+
+  function preventTouchScroll(evt) {
+    if (!evt) return;
+    if (evt.preventDefault) evt.preventDefault();
+    return false;
+  }
+
+  function installAudioUnlocker() {
+    function unlockOnce(evt) {
+      unlockAudio();
+      document.removeEventListener('touchstart', unlockOnce, false);
+      document.removeEventListener('touchend', unlockOnce, false);
+      document.removeEventListener('mousedown', unlockOnce, false);
+      document.removeEventListener('click', unlockOnce, false);
+    }
+    document.addEventListener('touchstart', unlockOnce, false);
+    document.addEventListener('touchend', unlockOnce, false);
+    document.addEventListener('mousedown', unlockOnce, false);
+    document.addEventListener('click', unlockOnce, false);
+    document.addEventListener('touchmove', preventTouchScroll, false);
   }
 
   /* ---------- canvas channels & animation clock ---------- */
