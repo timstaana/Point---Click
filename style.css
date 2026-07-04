@@ -47,15 +47,15 @@ body {
 }
 
 /* Stacked layers inside #stage. Only the hotspot layer catches clicks.
-   translateZ(0) gives each layer its own GPU surface on WebKit, so an
-   animated GIF frame repaints only its layer, not the whole stage
-   (crucial on the iPad). -webkit- only: Gecko needn't pay for layers. */
+   NOTE: do not promote these to their own GPU layers (translateZ etc.) —
+   on iOS 8 each animated GIF then flashes its rectangular layer bounds
+   during texture re-uploads. Plain imgs inside the one transformed
+   #game layer is the stable configuration on the iPad mini. */
 .layer {
   position: absolute;
   top: 0;
   left: 0;
   border: 0;
-  -webkit-transform: translateZ(0);
 }
 .layer.full {
   width: 800px;
