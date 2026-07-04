@@ -161,6 +161,24 @@ window.SHEETS = {
   "frames": 8,
   "loop": 0
  },
+ "cut_gnome_dance.gif": {
+  "dur": 200,
+  "file": "cut_gnome_dance.png",
+  "frames": 4,
+  "loop": 1
+ },
+ "cut_intro_story.gif": {
+  "dur": 700,
+  "file": "cut_intro_story.png",
+  "frames": 2,
+  "loop": 1
+ },
+ "cut_intro_title.gif": {
+  "dur": 700,
+  "file": "cut_intro_title.png",
+  "frames": 2,
+  "loop": 1
+ },
  "gate_garden_gnome_closed.gif": {
   "dur": 700,
   "file": "gate_garden_gnome_closed.png",

@@ -56,6 +56,30 @@
  *   unset, tapping two unrelated items just switches the selection.
  *   ART: only icon_<makes> (40x40) — the result never lies in a room.
  *
+ * CUTSCENES — timed full-frame clip sequences, no interaction:
+ *   window.CUTSCENES = {
+ *     intro: {
+ *       skip: true,                       // tap anywhere to skip
+ *       steps: [
+ *         { bg: 'cut_intro_1.gif', dur: 3000, sound: 'vo_intro_1.wav' },
+ *         { bg: 'cut_intro_2.gif', dur: 2500 },
+ *         { anim: 'char_x.gif', dur: 2000 } // char clip over current bg
+ *       ],
+ *       then: 'go:bedroom', entryAnim: '...', setFlag: 'sawIntro'
+ *     }
+ *   };
+ *   Trigger from any object with then: 'cut:intro' (gates, pickups and
+ *   fail paths included). Steps use the normal full-frame art contract;
+ *   a step's bg swaps the backdrop (clearing the character unless the
+ *   step also has anim), anim alone plays over the current backdrop —
+ *   so a cutscene can run inside the room or on its own art. When the
+ *   steps end, then/setFlag/entryAnim behave exactly as on a hotspot
+ *   (omit `then` to return to the room's idle). Everything the cutscene
+ *   references is preloaded before it starts; its target room loads
+ *   while it plays. The hotbar is hidden throughout.
+ *   window.START_CUTSCENE = 'intro' plays one at boot, before the
+ *   first room appears.
+ *
  * STORY FLAGS (optional, for cross-object logic — this is how a puzzle
  * dependency chart maps onto scenes: `needs` is an item edge, `when` is
  * the AND of flag edges, `setFlag` is the node's outgoing edges):
@@ -82,6 +106,32 @@
  *   item:  item_<scene>_<id>.gif (full-frame cel of it in that room)
  *          + icon_<id> (40x40 hotbar; also the held-item cursor)
  */
+
+// Played once at boot (before the first room). Optional.
+window.START_CUTSCENE = 'intro';
+
+window.CUTSCENES = {
+
+  // Title cards at game start; tap to skip, lands in the bedroom.
+  intro: {
+    skip: true,
+    steps: [
+      { bg: 'cut_intro_title.gif', dur: 2600 },
+      { bg: 'cut_intro_story.gif', dur: 2600 }
+    ],
+    then: 'go:bedroom'
+  },
+
+  // The gnome celebrates his coin (plays over the garden, right before
+  // the medal appears). Triggered by the gnome gate's locked action.
+  gnome_dance: {
+    steps: [
+      { anim: 'cut_gnome_dance.gif', dur: 2400, sound: 'pickup.wav' }
+    ]
+    // no `then`: back to garden idle, where gnomePaid reveals the medal
+  }
+
+};
 
 window.COMBINE = [
   { parts: ['stick', 'string'], makes: 'fishingrod' }
@@ -181,7 +231,8 @@ window.SCENES = {
         locked: {
           needs: 'coin', dur: 2000, sound: 'pickup.wav',
           hint: 'vo_gnome_wants.wav', hintDur: 3100,
-          setFlag: 'gnomePaid'
+          setFlag: 'gnomePaid',
+          then: 'cut:gnome_dance'
         },
         open: { sound: 'select.wav' } },
 

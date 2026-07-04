@@ -133,6 +133,11 @@ body {
   opacity: 0.45;
 }
 
+/* During a cutscene (engine adds .cutscene) the hotbar is hidden. */
+#game.cutscene #hotbar {
+  display: none;
+}
+
 /* The bar itself is art (ui_hotbar.png); CSS positions everything and
    draws only the selection circle. */
 .hotbar-art {

@@ -44,7 +44,7 @@
 
   // Bump when debugging stale caches on devices; shown in the letterbox
   // corner so you can tell at a glance which build a device is running.
-  var BUILD = 'b4';
+  var BUILD = 'b6';
 
   // iOS home-screen (standalone) mode: Web Audio there can pass every
   // check (clock running, no errors) yet route no sound to the speaker,
@@ -190,9 +190,19 @@
     el.onmouseout  = function () { hoverCursor = null; updateCursor(); };
   }
 
+  var cutsceneActive = false;
+
+  function updateGameClasses() {
+    if (!gameEl) return;
+    var cls = [];
+    if (busy) cls.push('busy');
+    if (cutsceneActive) cls.push('cutscene');
+    gameEl.className = cls.join(' ');
+  }
+
   function setBusy(b) {
     busy = b;
-    if (gameEl) gameEl.className = busy ? 'busy' : '';
+    updateGameClasses();
     updateCursor();
   }
 
@@ -236,11 +246,20 @@
     document.body.appendChild(stamp);
     addTap(stamp, toggleDebug);
     // Black screen until the first room (and the hotbar art) is fully
-    // loaded — otherwise the hotbar pops in before the stage.
+    // loaded — otherwise the hotbar pops in before the stage. If a
+    // START_CUTSCENE is declared, it plays first (also fully loaded).
     gameEl.style.visibility = 'hidden';
     preloadScene(current, 'ui_hotbar.png', function () {
-      gameEl.style.visibility = '';
-      enterScene(current, null, 0);
+      var sc = window.START_CUTSCENE;
+      if (sc && window.CUTSCENES && window.CUTSCENES[sc]) {
+        preloadCutscene(sc, function () {
+          gameEl.style.visibility = '';
+          playCutscene(sc);
+        });
+      } else {
+        gameEl.style.visibility = '';
+        enterScene(current, null, 0);
+      }
     });
   }
 
@@ -597,6 +616,75 @@
     renderSceneObjects(scene);
   }
 
+  /* ---------- cutscenes ----------
+   * window.CUTSCENES[name] = { steps: [...], skip?, then?, setFlag? }.
+   * Each step is { bg?, anim?, dur, sound? } using the same full-frame
+   * clips as everything else: bg swaps the backdrop (and clears the
+   * character unless the step also has anim); anim alone plays the
+   * character clip over the current backdrop, so a cutscene can run in
+   * the room or on its own art. When the steps end the cutscene object
+   * itself is dispatched — then/setFlag/entryAnim all work as on any
+   * hotspot. Trigger from anywhere with then: 'cut:name'. */
+  function playCutscene(name) {
+    var cs = (window.CUTSCENES || {})[name];
+    if (!cs || !cs.steps || !cs.steps.length) {
+      showIdle();
+      return;
+    }
+    cutsceneActive = true;
+    setBusy(true);
+    clearHotspots();
+    clearItems();
+    clearObject();
+    // the follow-up room loads while the cutscene plays
+    if (cs.then && cs.then.indexOf('go:') === 0) {
+      preloadScene(cs.then.substring(3), cs.entryAnim, null);
+    }
+    var i = 0;
+    var timer = null;
+    function finish() {
+      cutsceneActive = false;
+      setBusy(false);
+      // staying in (or returning to) a room: restore its backdrop
+      if (!cs.then || cs.then.indexOf('go:') !== 0) {
+        swapBg(scenes[current].bg);
+      }
+      dispatch(cs);
+    }
+    function step() {
+      if (i >= cs.steps.length) {
+        finish();
+        return;
+      }
+      var st = cs.steps[i];
+      i++;
+      if (st.bg) {
+        swapBg(st.bg);
+        if (!st.anim) channels.char = null;
+      }
+      if (st.anim) swapChar(st.anim);
+      requestPaint();
+      if (st.sound) playFile(st.sound);
+      timer = window.setTimeout(step, st.dur || 2000);
+    }
+    if (cs.skip) {
+      var skipEl = document.createElement('div');
+      skipEl.className = 'hotspot';
+      skipEl.style.left = '0px';
+      skipEl.style.top = '0px';
+      skipEl.style.width = GAME_W + 'px';
+      skipEl.style.height = GAME_H + 'px';
+      addTap(skipEl, function () {
+        if (!cutsceneActive) return;
+        if (timer) window.clearTimeout(timer);
+        clearHotspots();
+        finish();
+      });
+      hotspotLayer.appendChild(skipEl);
+    }
+    step();
+  }
+
   /* ---------- story-flag conditions ----------
    * `when` is one condition or an array of conditions that must ALL hold
    * (the AND of a puzzle dependency chart). For OR, list the object more
@@ -665,17 +753,25 @@
    * with XHR so the single <audio> element can start them instantly. */
   var warmedSounds = {};
 
-  function sceneAssets(name) {
-    var scene = scenes[name] || {};
+  // Scan any schema node (scene, cutscene) for art/sound file names.
+  function scanAssets(node) {
     var art = {};
     var sounds = {};
     var str = '';
-    try { str = JSON.stringify(scene); } catch (e) {}
+    try { str = JSON.stringify(node); } catch (e) {}
     var m = str.match(/[\w\-]+\.gif/g) || [];
     var i;
     for (i = 0; i < m.length; i++) art[m[i]] = true;
     m = str.match(/[\w\-]+\.wav/g) || [];
     for (i = 0; i < m.length; i++) sounds[m[i]] = true;
+    return { art: art, sounds: sounds };
+  }
+
+  function sceneAssets(name) {
+    var scene = scenes[name] || {};
+    var assets = scanAssets(scene);
+    var art = assets.art;
+    var i;
     var list = scene.objects || [];
     for (i = 0; i < list.length; i++) {
       var o = list[i];
@@ -689,7 +785,7 @@
         art['gate_' + o.gate + '_open.gif'] = true;
       }
     }
-    return { art: art, sounds: sounds };
+    return assets;
   }
 
   function warmSound(fileName, onDone) {
@@ -712,11 +808,10 @@
     }
   }
 
-  // Load everything `name` needs, then call cb (synchronously if it is
-  // all cached already). extraArt carries the entry clip for this
-  // particular transition. cb may be null for a fire-and-forget warm-up.
-  function preloadScene(name, extraArt, cb) {
-    var assets = sceneAssets(name);
+  // Load an asset set, then call cb (synchronously if it is all cached
+  // already). extraArt carries the entry clip for this particular
+  // transition. cb may be null for a fire-and-forget warm-up.
+  function preloadAssets(assets, extraArt, cb) {
     if (extraArt) assets.art[extraArt] = true;
     var pending = 1; // released at the end, see below
     var done = false;
@@ -751,6 +846,14 @@
       }, 15000);
     }
     step();
+  }
+
+  function preloadScene(name, extraArt, cb) {
+    preloadAssets(sceneAssets(name), extraArt, cb);
+  }
+
+  function preloadCutscene(name, cb) {
+    preloadAssets(scanAssets((window.CUTSCENES || {})[name] || {}), null, cb);
   }
 
   // Pickups: shorthand for "an item lying in the room". Art is two files
@@ -971,6 +1074,9 @@
       // head start: load the next room while the walk-out clip plays
       preloadScene(h.then.substring(3), h.entryAnim, null);
     }
+    if (h.then && h.then.indexOf('cut:') === 0) {
+      preloadCutscene(h.then.substring(4), null);
+    }
     if (!h.then && h.sound) {
       playSfx('select', h);
     }
@@ -1030,6 +1136,17 @@
       }
       combineItems(h.combo);
       showIdle();
+      return;
+    }
+
+    if (action.indexOf('cut:') === 0) {
+      var cut = action.substring(4);
+      // hold the current frame until the cutscene is fully loaded
+      setBusy(true);
+      preloadCutscene(cut, function () {
+        setBusy(false);
+        playCutscene(cut);
+      });
       return;
     }
 
