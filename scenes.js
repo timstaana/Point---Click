@@ -48,6 +48,9 @@
  *   Both parts are consumed (list reusable ones in keeps: ['knife']) and
  *   the result lands in the hotbar; a gate then simply wants the result:
  *   locked: { needs: 'grapple', ... }.
+ *   A held part can also be used directly on the other part's room
+ *   hotspot: the pickup's grab clip plays and the COMBINED item lands
+ *   in the hotbar — the room part never passes through the inventory.
  *   window.COMBINE_HINT: voice line for a no-recipe pair, played with
  *   the scene's fail animation (like a wrong item on a hotspot); if
  *   unset, tapping two unrelated items just switches the selection.

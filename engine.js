@@ -756,6 +756,18 @@
         }
         return;
       }
+      // Held item + a room pickup that combines with it: play the
+      // pickup's grab clip, then hand the recipe to dispatch — the
+      // room item goes straight into the combine, never the hotbar.
+      if (h.then && h.then.indexOf('pick:') === 0) {
+        var combo = findCombo(selectedItem, h.then.substring(5));
+        if (combo) {
+          selectedItem = null;
+          renderHotbar();
+          triggerHotspot(mergeEntry(h, { combo: combo }));
+          return;
+        }
+      }
       triggerWrongItem(h, selectedItem);
       return;
     }
@@ -821,6 +833,19 @@
       eachFlag(h.setFlag, function (f) { storyFlags[f] = true; });
     }
     eachFlag(h.clearFlag, function (f) { delete storyFlags[f]; });
+
+    // Combine-at-hotspot: the room part is used up (unless the recipe
+    // keeps it) and combineItems handles the rest — consuming the held
+    // part, adding the result, flags and sound.
+    if (h.combo) {
+      if (action.indexOf('pick:') === 0) {
+        var part = action.substring(5);
+        if (!inKeeps(h.combo, part)) spent[part] = true;
+      }
+      combineItems(h.combo);
+      showIdle();
+      return;
+    }
 
     if (action.indexOf('go:') === 0) {
       var target = action.substring(3);
@@ -929,15 +954,17 @@
     return null;
   }
 
-  function combineItems(combo) {
+  function inKeeps(combo, part) {
     var keeps = combo.keeps || [];
+    for (var i = 0; i < keeps.length; i++) {
+      if (keeps[i] === part) return true;
+    }
+    return false;
+  }
+
+  function combineItems(combo) {
     for (var i = 0; i < 2; i++) {
-      var part = combo.parts[i];
-      var kept = false;
-      for (var j = 0; j < keeps.length; j++) {
-        if (keeps[j] === part) kept = true;
-      }
-      if (!kept) consume(part);
+      if (!inKeeps(combo, combo.parts[i])) consume(combo.parts[i]);
     }
     if (!hasItem(combo.makes)) inv.push(combo.makes);
     spent[combo.makes] = true; // never re-pickable from a room
