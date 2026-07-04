@@ -48,8 +48,9 @@
  *   Both parts are consumed (list reusable ones in keeps: ['knife']) and
  *   the result lands in the hotbar; a gate then simply wants the result:
  *   locked: { needs: 'grapple', ... }.
- *   window.COMBINE_HINT: voice line for a no-recipe pair; if unset,
- *   tapping two unrelated items just switches the selection.
+ *   window.COMBINE_HINT: voice line for a no-recipe pair, played with
+ *   the scene's fail animation (like a wrong item on a hotspot); if
+ *   unset, tapping two unrelated items just switches the selection.
  *   ART: only icon_<makes> (40x40) — the result never lies in a room.
  *
  * STORY FLAGS (optional, for cross-object logic — this is how a puzzle

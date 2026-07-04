@@ -71,7 +71,7 @@ body {
 
 /* Keep pixel-art crisp when scaled up: nearest-neighbour, no smoothing.
    Order matters — last supported value wins, `pixelated` is the best. */
-#game img, #stage-canvas {
+#game img, #stage-canvas, #cursor-layer img {
   image-rendering: -webkit-optimize-contrast; /* old WebKit / Safari 8 */
   image-rendering: -moz-crisp-edges;          /* TenFourFox / old Gecko */
   image-rendering: crisp-edges;
@@ -86,14 +86,24 @@ body {
   -webkit-tap-highlight-color: rgba(255, 220, 100, 0.35);
 }
 
-/* Software cursor — 40x40 img in game coordinates, above everything. */
+/* Software cursor — 40x40 layer in screen coordinates, above everything.
+   All cursor images stay in the layer; the engine toggles display. */
 #cursor-layer {
+  position: fixed;
+  width: 40px;
+  height: 40px;
+  pointer-events: none;
+  z-index: 100;
+}
+
+#cursor-layer img {
+  display: none;
   position: absolute;
+  top: 0;
+  left: 0;
   width: 40px;
   height: 40px;
   border: 0;
-  pointer-events: none;
-  z-index: 40;
 }
 
 /* Hotbar — overlaps the bottom of the stage. */

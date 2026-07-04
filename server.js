@@ -34,6 +34,20 @@ function serveFile(req, res) {
     }
     var ext = path.extname(filePath).toLowerCase();
     var mime = MIME_TYPES[ext] || 'application/octet-stream';
+    var lastMod = stats.mtime.toUTCString();
+
+    // Conditional GET: clients revalidate instead of re-downloading.
+    // (`no-cache` = "store it, but ask before reusing" — a 304 header
+    // exchange instead of a full transfer, and edits show up instantly.)
+    var ims = req.headers['if-modified-since'];
+    if (ims && !isNaN(Date.parse(ims)) && Date.parse(lastMod) <= Date.parse(ims)) {
+      res.writeHead(304, {
+        'Last-Modified': lastMod,
+        'Cache-Control': 'no-cache'
+      });
+      res.end();
+      return;
+    }
 
     // iOS Safari's media loader requires Range support and a real
     // Content-Length before it will play audio/video at all.
@@ -51,7 +65,9 @@ function serveFile(req, res) {
         'Content-Type': mime,
         'Content-Length': end - start + 1,
         'Content-Range': 'bytes ' + start + '-' + end + '/' + stats.size,
-        'Accept-Ranges': 'bytes'
+        'Accept-Ranges': 'bytes',
+        'Last-Modified': lastMod,
+        'Cache-Control': 'no-cache'
       });
       fs.createReadStream(filePath, { start: start, end: end }).pipe(res);
       return;
@@ -60,7 +76,9 @@ function serveFile(req, res) {
     res.writeHead(200, {
       'Content-Type': mime,
       'Content-Length': stats.size,
-      'Accept-Ranges': 'bytes'
+      'Accept-Ranges': 'bytes',
+      'Last-Modified': lastMod,
+      'Cache-Control': 'no-cache'
     });
     fs.createReadStream(filePath).pipe(res);
   });

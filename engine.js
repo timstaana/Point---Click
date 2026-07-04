@@ -35,8 +35,6 @@
 
   var gameEl, canvasEl, ctx, hotspotLayer, hotbarEl;
   var currentScale = 1;
-  var currentTx = 0;
-  var currentTy = 0;
   var lastTouchTime = 0;
   var storyFlags = {};
   var objectStates = {};
@@ -56,12 +54,16 @@
   }
 
   /* ---------- software cursor ----------
-   * The native cursor is hidden inside #game (CSS) and a 40x40 <img>
-   * follows the mouse instead. It lives in game coordinates, so it
-   * scales with the art. Busy shows 'wait'; while an inventory item is
-   * selected the cursor is that item's icon; hotspots set 'point' (or
-   * their own `cursor` name) on hover. Touch devices never show it.
-   * Cursor name -> hotspot px (anything else centres): */
+   * The native cursor is hidden (CSS) and a 40x40 #cursor-layer div
+   * follows the mouse instead. It sits in SCREEN coordinates outside the
+   * scaled #game element, so positioning is just clientX/Y minus the
+   * hotspot — no scale math, no drift. All cursor images live in the
+   * layer permanently and are toggled with display, so switching
+   * cursors never touches the network (old Gecko revalidates img.src on
+   * every swap). Busy shows 'wait'; while an inventory item is selected
+   * the cursor is that item's icon; hotspots set 'point' (or their own
+   * `cursor` name) on hover. Touch devices never show it.
+   * Cursor name -> hotspot px (the item icon centres): */
   var CURSORS = {
     'default': [2, 1],
     'point':   [19, 1],
@@ -69,59 +71,69 @@
     'right':   [39, 20],
     'wait':    [20, 20]
   };
-  var cursorEl = null;
+  var cursorWrap = null;
+  var cursorImgs = {};
   var cursorName = null;
   var hoverCursor = null;
   var cursorX = 0;
   var cursorY = 0;
 
   function initCursor() {
+    cursorWrap = document.createElement('div');
+    cursorWrap.id = 'cursor-layer';
+    cursorWrap.style.display = 'none';
     for (var n in CURSORS) {
-      if (CURSORS.hasOwnProperty(n)) preload('cursor_' + n + '.png');
+      if (CURSORS.hasOwnProperty(n)) addCursorImg(n, 'cursor_' + n + '.png');
     }
-    cursorEl = document.createElement('img');
-    cursorEl.id = 'cursor-layer';
-    cursorEl.style.display = 'none';
-    gameEl.appendChild(cursorEl);
+    document.body.appendChild(cursorWrap);
     if (!window.addEventListener) return;
     window.addEventListener('mousemove', function (evt) {
       if (Date.now() - lastTouchTime < 1000) return; // synthesized after a tap
-      // Game coordinates, unclamped: #game doesn't clip, so the cursor
-      // follows into the letterbox area outside the 800x600 canvas too.
-      cursorX = (evt.clientX - currentTx) / currentScale;
-      cursorY = (evt.clientY - currentTy) / currentScale;
-      cursorEl.style.display = 'block';
+      cursorX = evt.clientX;
+      cursorY = evt.clientY;
+      cursorWrap.style.display = 'block';
       positionCursor();
     }, false);
     document.addEventListener('mouseout', function (evt) {
       // hide only when the mouse leaves the window entirely
       if (!(evt.relatedTarget || evt.toElement)) {
-        cursorEl.style.display = 'none';
+        cursorWrap.style.display = 'none';
       }
     }, false);
     window.addEventListener('touchstart', function () {
       lastTouchTime = Date.now();
-      cursorEl.style.display = 'none';
+      cursorWrap.style.display = 'none';
     }, false);
     updateCursor();
   }
 
   function positionCursor() {
     var hs = CURSORS[cursorName] || [20, 20];
-    cursorEl.style.left = (cursorX - hs[0]) + 'px';
-    cursorEl.style.top  = (cursorY - hs[1]) + 'px';
+    cursorWrap.style.left = (cursorX - hs[0]) + 'px';
+    cursorWrap.style.top  = (cursorY - hs[1]) + 'px';
+  }
+
+  function addCursorImg(name, file) {
+    var im = document.createElement('img');
+    im.src = 'images/' + file;
+    cursorImgs[name] = im;
+    cursorWrap.appendChild(im);
+    return im;
   }
 
   function updateCursor() {
-    if (!cursorEl) return;
+    if (!cursorWrap) return;
     var name = busy ? 'wait'
              : selectedItem ? 'item:' + selectedItem
              : (hoverCursor || 'default');
     if (name !== cursorName) {
+      if (!cursorImgs[name]) {
+        // first selection of this item: add its icon cursor, once ever
+        addCursorImg(name, iconFor(selectedItem));
+      }
+      if (cursorImgs[cursorName]) cursorImgs[cursorName].style.display = 'none';
       cursorName = name;
-      cursorEl.src = 'images/' + (selectedItem && !busy
-        ? iconFor(selectedItem)
-        : 'cursor_' + name + '.png');
+      cursorImgs[name].style.display = 'block';
     }
     positionCursor();
   }
@@ -150,9 +162,19 @@
     var combos = window.COMBINE || [];
     for (var ci = 0; ci < combos.length; ci++) {
       preload(iconFor(combos[ci].makes));
+      if (combos[ci].sound) warmSound(combos[ci].sound, null);
     }
+    preload(DEFAULT_FAIL_ANIM);
+    var defaults = window.SOUNDS || DEFAULT_SOUNDS;
+    for (var sk in defaults) {
+      if (defaults.hasOwnProperty(sk)) warmSound(defaults[sk], null);
+    }
+    if (window.COMBINE_HINT) warmSound(window.COMBINE_HINT, null);
+    initHotbar();
     renderHotbar();
-    enterScene(current, null, 0);
+    preloadScene(current, null, function () {
+      enterScene(current, null, 0);
+    });
   }
 
   /* ---------- responsive scaling ---------- */
@@ -164,10 +186,8 @@
     var vw = window.innerWidth;
     var vh = window.innerHeight;
     currentScale = Math.min(vw / GAME_W, vh / GAME_H);
-    currentTx = (vw - GAME_W * currentScale) / 2;
-    currentTy = (vh - GAME_H * currentScale) / 2;
-    gameEl.style.left = currentTx + 'px';
-    gameEl.style.top  = currentTy + 'px';
+    gameEl.style.left = ((vw - GAME_W * currentScale) / 2) + 'px';
+    gameEl.style.top  = ((vh - GAME_H * currentScale) / 2) + 'px';
     var t = 'scale(' + currentScale + ')';
     gameEl.style.webkitTransform = t;
     gameEl.style.MozTransform = t;
@@ -232,6 +252,7 @@
     try {
       // A real sound already playing means a gesture was accepted.
       if (!sfxEl.paused) { audioUnlocked = true; return; }
+      sfxCurrent = DEFAULT_SOUNDS.select;
       sfxEl.src = 'sounds/' + DEFAULT_SOUNDS.select;
       sfxEl.load();
       sfxEl.play();
@@ -246,10 +267,20 @@
     } catch (e) {}
   }
 
+  var sfxCurrent = null;
+
   function playFile(fileName) {
     if (!fileName || !sfxEl) return;
     try {
       sfxEl.pause();
+      // Same file again (select.wav plays constantly): rewind and
+      // replay without touching src — no reload, no request.
+      if (sfxCurrent === fileName && sfxEl.readyState > 0) {
+        try { sfxEl.currentTime = 0; } catch (e2) {}
+        sfxEl.play();
+        return;
+      }
+      sfxCurrent = fileName;
       sfxEl.src = 'sounds/' + fileName;
       sfxEl.load();
       sfxEl.play();
@@ -431,14 +462,109 @@
 
   var preloaded = {};
   function preload(fileName) {
-    if (!fileName || preloaded[fileName]) return;
-    preloaded[fileName] = true;
+    if (!fileName) return null;
     if (window.SHEETS && window.SHEETS[fileName]) {
-      getSheet(fileName); // stage art: warm the PNG strip
-      return;
+      return getSheet(fileName).img; // stage art: warm the PNG strip
     }
-    var im = new Image();
-    im.src = 'images/' + fileName; // UI art: plain PNG
+    if (!preloaded[fileName]) {
+      var im = new Image();
+      im.src = 'images/' + fileName; // UI art: plain PNG
+      preloaded[fileName] = im;
+    }
+    return preloaded[fileName];
+  }
+
+  /* ---------- per-scene asset preloading ----------
+   * A room is only shown once every clip and sound it references is
+   * loaded, so a clip never plays blank on its first run. There is no
+   * loading indicator: on a room change we simply stay in the current
+   * room (the exit walk-out clip usually covers the whole wait, and the
+   * preload starts as soon as the exit is tapped). Art is found by
+   * scanning the scene data for *.gif / *.wav names plus the derived
+   * pickup / gate / icon names. Sounds are warmed into the HTTP cache
+   * with XHR so the single <audio> element can start them instantly. */
+  var warmedSounds = {};
+
+  function sceneAssets(name) {
+    var scene = scenes[name] || {};
+    var art = {};
+    var sounds = {};
+    var str = '';
+    try { str = JSON.stringify(scene); } catch (e) {}
+    var m = str.match(/[\w\-]+\.gif/g) || [];
+    var i;
+    for (i = 0; i < m.length; i++) art[m[i]] = true;
+    m = str.match(/[\w\-]+\.wav/g) || [];
+    for (i = 0; i < m.length; i++) sounds[m[i]] = true;
+    var list = scene.objects || [];
+    for (i = 0; i < list.length; i++) {
+      var o = list[i];
+      if (o.item) {
+        art['item_' + name + '_' + o.item + '.gif'] = true;
+        art[iconFor(o.item)] = true;
+      }
+      if (o.gate) {
+        art['gate_' + o.gate + '_closed.gif'] = true;
+        art['gate_' + o.gate + '_use.gif'] = true;
+        art['gate_' + o.gate + '_open.gif'] = true;
+      }
+    }
+    return { art: art, sounds: sounds };
+  }
+
+  function warmSound(fileName, onDone) {
+    warmedSounds[fileName] = true;
+    try {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', 'sounds/' + fileName, true);
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState === 4 && onDone) onDone();
+      };
+      xhr.send(null);
+    } catch (e) {
+      if (onDone) onDone();
+    }
+  }
+
+  // Load everything `name` needs, then call cb (synchronously if it is
+  // all cached already). extraArt carries the entry clip for this
+  // particular transition. cb may be null for a fire-and-forget warm-up.
+  function preloadScene(name, extraArt, cb) {
+    var assets = sceneAssets(name);
+    if (extraArt) assets.art[extraArt] = true;
+    var pending = 1; // released at the end, see below
+    var done = false;
+    function step() {
+      pending--;
+      if (pending <= 0 && !done) {
+        done = true;
+        if (cb) cb();
+      }
+    }
+    var f;
+    for (f in assets.art) {
+      if (!assets.art.hasOwnProperty(f)) continue;
+      var img = preload(f);
+      if (img && !img.complete) {
+        pending++;
+        img.addEventListener('load', step, false);
+        img.addEventListener('error', step, false);
+      }
+    }
+    for (f in assets.sounds) {
+      if (!assets.sounds.hasOwnProperty(f)) continue;
+      if (!warmedSounds[f]) {
+        pending++;
+        warmSound(f, step);
+      }
+    }
+    if (cb) {
+      // never leave the game stuck on one broken file
+      window.setTimeout(function () {
+        if (!done) { done = true; cb(); }
+      }, 15000);
+    }
+    step();
   }
 
   // Pickups: shorthand for "an item lying in the room". Art is two files
@@ -643,6 +769,10 @@
   function triggerHotspot(h) {
     setBusy(true);
     clearHotspots();
+    if (h.then && h.then.indexOf('go:') === 0) {
+      // head start: load the next room while the walk-out clip plays
+      preloadScene(h.then.substring(3), h.entryAnim, null);
+    }
     if (!h.then && h.sound) {
       playSfx('select', h);
     }
@@ -693,8 +823,15 @@
     eachFlag(h.clearFlag, function (f) { delete storyFlags[f]; });
 
     if (action.indexOf('go:') === 0) {
-      playSfx('door', h);
-      enterScene(action.substring(3), h.entryAnim, h.entryDur || 1200);
+      var target = action.substring(3);
+      // stay in the current room (holding the walk-out's last frame,
+      // wait cursor, no indicator) until the next room is fully loaded
+      setBusy(true);
+      preloadScene(target, h.entryAnim, function () {
+        setBusy(false);
+        playSfx('door', h);
+        enterScene(target, h.entryAnim, h.entryDur || 1200);
+      });
       return;
     }
 
@@ -732,26 +869,47 @@
   // 6 slots, evenly spaced across the 800px stage:
   //   slot width 90px, padding 40px each side, gap (720 - 6*90)/5 = 36px
   //   => left(i) = 40 + i * (90 + 36) = 40 + i * 126
-  function renderHotbar() {
-    updateCursor(); // selection may have changed
-    while (hotbarEl.firstChild) hotbarEl.removeChild(hotbarEl.firstChild);
+  // The slot divs are built once; each item gets ONE cached icon <img>
+  // that is moved between slots, never recreated — recreating imgs made
+  // old Gecko refetch the icon (and flash) on every hotbar change.
+  var slotEls = [];
+  var slotIds = [];
+  var iconImgs = {};
+
+  function initHotbar() {
     for (var i = 0; i < HOTBAR_SLOTS; i++) {
       var slot = document.createElement('div');
       slot.className = 'hotbar-slot';
       slot.style.left = (40 + i * 126) + 'px';
-      if (i < inv.length) {
-        var id = inv[i];
-        var img = document.createElement('img');
-        img.src = 'images/' + iconFor(id);
-        img.className = 'hotbar-icon';
-        addTap(img, makeHotbarTapHandler(id));
-        addHover(img, 'point');
-        if (id === selectedItem) {
-          slot.className += ' selected';
-        }
-        slot.appendChild(img);
-      }
       hotbarEl.appendChild(slot);
+      slotEls.push(slot);
+      slotIds.push(null);
+    }
+  }
+
+  function iconImg(id) {
+    if (!iconImgs[id]) {
+      var img = document.createElement('img');
+      img.src = 'images/' + iconFor(id);
+      img.className = 'hotbar-icon';
+      addTap(img, makeHotbarTapHandler(id));
+      addHover(img, 'point');
+      iconImgs[id] = img;
+    }
+    return iconImgs[id];
+  }
+
+  function renderHotbar() {
+    updateCursor(); // selection may have changed
+    for (var i = 0; i < HOTBAR_SLOTS; i++) {
+      var slot = slotEls[i];
+      var id = i < inv.length ? inv[i] : null;
+      if (slotIds[i] !== id) {
+        while (slot.firstChild) slot.removeChild(slot.firstChild);
+        if (id) slot.appendChild(iconImg(id));
+        slotIds[i] = id;
+      }
+      slot.className = 'hotbar-slot' + (id && id === selectedItem ? ' selected' : '');
     }
   }
 
@@ -799,11 +957,11 @@
           return;
         }
         // No recipe: with a COMBINE_HINT line, treat it as a failed
-        // combine; without one, just switch the selection.
+        // combine — the character plays the scene's fail animation with
+        // the line, same as using a wrong item on a hotspot. Without a
+        // hint line, just switch the selection.
         if (window.COMBINE_HINT) {
-          selectedItem = null;
-          playFile(window.COMBINE_HINT);
-          renderHotbar();
+          triggerWrongItem({ failSound: window.COMBINE_HINT }, itemId);
           return;
         }
       }
