@@ -44,7 +44,7 @@
 
   // Bump when debugging stale caches on devices; shown in the letterbox
   // corner so you can tell at a glance which build a device is running.
-  var BUILD = 'b3';
+  var BUILD = 'b4';
 
   // iOS home-screen (standalone) mode: Web Audio there can pass every
   // check (clock running, no errors) yet route no sound to the speaker,
@@ -235,7 +235,11 @@
     stamp.appendChild(document.createTextNode(BUILD));
     document.body.appendChild(stamp);
     addTap(stamp, toggleDebug);
-    preloadScene(current, null, function () {
+    // Black screen until the first room (and the hotbar art) is fully
+    // loaded — otherwise the hotbar pops in before the stage.
+    gameEl.style.visibility = 'hidden';
+    preloadScene(current, 'ui_hotbar.png', function () {
+      gameEl.style.visibility = '';
       enterScene(current, null, 0);
     });
   }
@@ -1076,20 +1080,34 @@
   // 6 slots, evenly spaced across the 800px stage:
   //   slot width 90px, padding 40px each side, gap (720 - 6*90)/5 = 36px
   //   => left(i) = 40 + i * (90 + 36) = 40 + i * 126
+  // The bar itself is art: ui_hotbar.png, an 800x120 strip drawn behind
+  // the slots; its six wells must sit on the grid above (centers at
+  // x = 85 + i*126, y = 55). The selected state is a CSS circle
+  // (.hotbar-selected) under the icon but above the bar art.
   // The slot divs are built once; each item gets ONE cached icon <img>
   // that is moved between slots, never recreated — recreating imgs made
   // old Gecko refetch the icon (and flash) on every hotbar change.
   var slotEls = [];
+  var slotSelEls = [];
   var slotIds = [];
   var iconImgs = {};
 
   function initHotbar() {
+    var art = document.createElement('img');
+    art.className = 'hotbar-art';
+    art.src = 'images/ui_hotbar.png';
+    hotbarEl.appendChild(art);
     for (var i = 0; i < HOTBAR_SLOTS; i++) {
       var slot = document.createElement('div');
       slot.className = 'hotbar-slot';
       slot.style.left = (40 + i * 126) + 'px';
+      var sel = document.createElement('div');
+      sel.className = 'hotbar-selected';
+      sel.style.display = 'none';
+      slot.appendChild(sel);
       hotbarEl.appendChild(slot);
       slotEls.push(slot);
+      slotSelEls.push(sel);
       slotIds.push(null);
     }
   }
@@ -1112,11 +1130,13 @@
       var slot = slotEls[i];
       var id = i < inv.length ? inv[i] : null;
       if (slotIds[i] !== id) {
-        while (slot.firstChild) slot.removeChild(slot.firstChild);
+        // keep the selection overlay img (firstChild); swap only icons
+        while (slot.childNodes.length > 1) slot.removeChild(slot.lastChild);
         if (id) slot.appendChild(iconImg(id));
         slotIds[i] = id;
       }
-      slot.className = 'hotbar-slot' + (id && id === selectedItem ? ' selected' : '');
+      slotSelEls[i].style.display =
+        (id && id === selectedItem) ? 'block' : 'none';
     }
   }
 

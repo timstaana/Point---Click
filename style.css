@@ -133,18 +133,36 @@ body {
   opacity: 0.45;
 }
 
+/* The bar itself is art (ui_hotbar.png); CSS positions everything and
+   draws only the selection circle. */
+.hotbar-art {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 800px;
+  height: 120px;
+  border: 0;
+}
+
 .hotbar-slot {
   position: absolute;
   top: 10px;
   width: 90px;
   height: 90px;
+}
+
+/* Selection marker — translucent circle sitting on the well, under the
+   icon (it is the slot's first child) but above the bar art. */
+.hotbar-selected {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 78px;
+  height: 78px;
   -webkit-border-radius: 50%;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
-  border: 2px solid rgba(255, 220, 100, 0.55);
-  -webkit-box-sizing: border-box;
-  -moz-box-sizing: border-box;
-  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.35);
+  pointer-events: none;
 }
 
 /* Build stamp — tiny version marker in the letterbox corner, for
@@ -173,15 +191,10 @@ body {
   text-align: left;
 }
 
-.hotbar-slot.selected {
-  border-color: rgba(255, 255, 255, 0.8);
-  background: rgba(255, 255, 255, 0.12);
-}
-
 .hotbar-icon {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  top: 10px;
+  left: 10px;
   width: 70px;
   height: 70px;
   display: block;
