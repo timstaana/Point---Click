@@ -170,6 +170,10 @@
     updateScale();
     initCursor();
     initHintButton();
+    var combos = window.COMBINE || [];
+    for (var ci = 0; ci < combos.length; ci++) {
+      preload(iconFor(combos[ci].makes));
+    }
     renderHotbar();
     enterScene(current, null, 0);
   }
@@ -820,9 +824,43 @@
     }
   }
 
+  /* ---------- combining items ----------
+   * window.COMBINE recipes: { parts: [a, b], makes: c, sound?, setFlag? }.
+   * Select one part, tap the other in the hotbar. Both are consumed and
+   * the result lands in the hotbar. No recipe -> just switch selection. */
+  function findCombo(a, b) {
+    var list = window.COMBINE || [];
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i].parts;
+      if (p && p.length === 2 &&
+          ((p[0] === a && p[1] === b) || (p[0] === b && p[1] === a))) {
+        return list[i];
+      }
+    }
+    return null;
+  }
+
+  function combineItems(combo) {
+    consume(combo.parts[0]);
+    consume(combo.parts[1]);
+    if (!hasItem(combo.makes)) inv.push(combo.makes);
+    spent[combo.makes] = true; // never re-pickable from a room
+    eachFlag(combo.setFlag, function (f) { storyFlags[f] = true; });
+    selectedItem = null;
+    playSound(loadSound(combo.sound || getSoundFile('pickup')));
+    renderHotbar();
+  }
+
   function makeHotbarTapHandler(itemId) {
     return function () {
       if (busy) return;
+      if (selectedItem && selectedItem !== itemId) {
+        var combo = findCombo(selectedItem, itemId);
+        if (combo) {
+          combineItems(combo);
+          return;
+        }
+      }
       selectedItem = (selectedItem === itemId) ? null : itemId;
       playSceneSound('select');
       renderHotbar();

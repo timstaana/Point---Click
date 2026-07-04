@@ -39,6 +39,16 @@
  * Using the right item plays the one-shot use clip and the gate stays
  * open for the rest of the game.
  *
+ * COMBINING ITEMS — select one hotbar item, then tap another:
+ *   window.COMBINE = [
+ *     { parts: ['rope', 'hook'], makes: 'grapple',
+ *       sound: 'combine.wav', setFlag: 'madeGrapple' }
+ *   ];
+ *   Both parts are consumed and the result lands in the hotbar; a gate
+ *   then simply wants the result: locked: { needs: 'grapple', ... }.
+ *   Tapping two items with no recipe just switches the selection.
+ *   ART: only icon_<makes>.gif (40x40) — the result never lies in a room.
+ *
  * STORY FLAGS (optional, for cross-object logic — this is how a puzzle
  * dependency chart maps onto scenes: `needs` is an item edge, `when` is
  * the AND of flag edges, `setFlag` is the node's outgoing edges):
@@ -61,6 +71,8 @@
  *          and the last _use frame must match _open.
  *   item:  item_<id>.gif (in the room) + icon_<id>.gif (40x40 hotbar)
  */
+
+window.COMBINE = [];
 
 window.SCENES = {
 
