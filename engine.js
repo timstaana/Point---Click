@@ -2,12 +2,13 @@
  * ES5 safe. Targets: Safari 8+ (iPad mini 1, iOS 8), TenFourFox / PowerFox.
  *
  * Rendering model — everything painted onto ONE <canvas> (iOS 8 flashes
- * when transparent animated GIFs are layered in the DOM, so we never do
+ * when transparent animated layers sit in the DOM, so we never do
  * that). Channels composited in order each tick:
  *   bg -> item cels -> object overlay -> character
- * Authoring stays animated GIFs; a build step (make_sheets.py) flattens
- * each stage GIF into a PNG frame-strip + images/sheets.js manifest
- * (frames / per-frame ms / loop). The engine owns the animation clock.
+ * All art is PNG. Animated clips are horizontal PNG frame-strips
+ * described by images/sheets.js (frames / per-frame ms / loop); a name
+ * with no manifest entry is a static single-frame PNG. The engine owns
+ * the animation clock.
  *
  * DOM: #stage-canvas, #hotspot-layer (transparent clickable divs),
  * #hotbar, #cursor-layer (software cursor). Hotspots are plain
@@ -44,7 +45,7 @@
 
   // Bump when debugging stale caches on devices; shown in the letterbox
   // corner so you can tell at a glance which build a device is running.
-  var BUILD = 'b6';
+  var BUILD = 'b7';
 
   // iOS home-screen (standalone) mode: Web Audio there can pass every
   // check (clock running, no errors) yet route no sound to the speaker,
@@ -81,7 +82,7 @@
   }
 
   var HOTBAR_SLOTS = 6;
-  var DEFAULT_FAIL_ANIM = 'char_generic_cant_use.gif';
+  var DEFAULT_FAIL_ANIM = 'char_generic_cant_use.png';
   var DEFAULT_SOUNDS = {
     select: 'select.wav',
     pickup: 'pickup.wav',
@@ -748,7 +749,7 @@
    * loading indicator: on a room change we simply stay in the current
    * room (the exit walk-out clip usually covers the whole wait, and the
    * preload starts as soon as the exit is tapped). Art is found by
-   * scanning the scene data for *.gif / *.wav names plus the derived
+   * scanning the scene data for *.png / *.wav names plus the derived
    * pickup / gate / icon names. Sounds are warmed into the HTTP cache
    * with XHR so the single <audio> element can start them instantly. */
   var warmedSounds = {};
@@ -759,7 +760,7 @@
     var sounds = {};
     var str = '';
     try { str = JSON.stringify(node); } catch (e) {}
-    var m = str.match(/[\w\-]+\.gif/g) || [];
+    var m = str.match(/[\w\-]+\.png/g) || [];
     var i;
     for (i = 0; i < m.length; i++) art[m[i]] = true;
     m = str.match(/[\w\-]+\.wav/g) || [];
@@ -776,13 +777,13 @@
     for (i = 0; i < list.length; i++) {
       var o = list[i];
       if (o.item) {
-        art['item_' + name + '_' + o.item + '.gif'] = true;
+        art['item_' + name + '_' + o.item + '.png'] = true;
         art[iconFor(o.item)] = true;
       }
       if (o.gate) {
-        art['gate_' + o.gate + '_closed.gif'] = true;
-        art['gate_' + o.gate + '_use.gif'] = true;
-        art['gate_' + o.gate + '_open.gif'] = true;
+        art['gate_' + o.gate + '_closed.png'] = true;
+        art['gate_' + o.gate + '_use.png'] = true;
+        art['gate_' + o.gate + '_open.png'] = true;
       }
     }
     return assets;
@@ -858,13 +859,13 @@
 
   // Pickups: shorthand for "an item lying in the room". Art is two files
   // named after the item id:
-  //   item_<scene>_<id>.gif (full-frame cel) / icon_<id>.png (40x40 icon)
+  //   item_<scene>_<id>.png (full-frame cel) / icon_<id>.png (40x40 icon)
   function expandItem(obj) {
     if (!obj.item) return obj;
     preload(iconFor(obj.item));
     return {
       id: obj.item,
-      src: 'item_' + current + '_' + obj.item + '.gif',
+      src: 'item_' + current + '_' + obj.item + '.png',
       area: obj.area, when: obj.when,
       anim: obj.anim, objAnim: obj.objAnim, dur: obj.dur,
       sound: obj.sound,
@@ -889,15 +890,15 @@
   // Gates: shorthand for "blocked until the right item is used" (locked
   // door, NPC who wants something, ...). Expands to a two-state object;
   // art is three full-frame cels named after the gate id:
-  //   gate_<id>_closed.gif / gate_<id>_use.gif / gate_<id>_open.gif
+  //   gate_<id>_closed.png / gate_<id>_use.png / gate_<id>_open.png
   function expandGate(obj) {
     if (!obj.gate) return obj;
     var stem = 'gate_' + obj.gate;
-    preload(stem + '_use.gif');
-    preload(stem + '_open.gif');
+    preload(stem + '_use.png');
+    preload(stem + '_open.png');
     var locked = obj.locked || {};
     var open = obj.open || {};
-    var openState = { src: stem + '_open.gif' };
+    var openState = { src: stem + '_open.png' };
     var k;
     for (k in open) {
       if (open.hasOwnProperty(k)) openState[k] = open[k];
@@ -909,9 +910,9 @@
       state: 'closed',
       states: {
         closed: {
-          src: stem + '_closed.gif',
+          src: stem + '_closed.png',
           needs: locked.needs,
-          objAnim: stem + '_use.gif',
+          objAnim: stem + '_use.png',
           dur: locked.dur || 2000,
           sound: locked.sound,
           hint: locked.hint, hintDur: locked.hintDur,
@@ -920,6 +921,8 @@
           keepItem: locked.keepItem,
           setFlag: locked.setFlag, setFlagValue: locked.setFlagValue,
           clearFlag: locked.clearFlag,
+          then: locked.then,
+          entryAnim: locked.entryAnim, entryDur: locked.entryDur,
           setState: 'open'
         },
         open: openState

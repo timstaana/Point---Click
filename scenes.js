@@ -1,6 +1,6 @@
 /* Scene definitions.
  *
- * A SCENE is: bg (looping background GIF), idle (looping character clip),
+ * A SCENE is: bg (looping background clip), idle (looping character clip),
  * failAnim/failDur (default wrong-item reaction), objects (list below),
  * and optional `sounds` overrides for select/pickup/door/fail.
  *
@@ -35,7 +35,9 @@
  *
  * GATES — anything blocked until the right item is used (locked door,
  * NPC who wants something, machine missing a part). Two blocks:
- *   locked: { needs, dur (use-clip length), sound, hint, hintDur, items }
+ *   locked: { needs, dur (use-clip length), sound, hint, hintDur, items,
+ *             then, setFlag, ... — then/entryAnim run AFTER the use clip,
+ *             e.g. then: 'cut:...' for a follow-up cutscene }
  *   open:   a normal click action (anim, dur, sound, then, entryAnim, ...)
  * Using the right item plays the one-shot use clip and the gate stays
  * open for the rest of the game.
@@ -61,9 +63,9 @@
  *     intro: {
  *       skip: true,                       // tap anywhere to skip
  *       steps: [
- *         { bg: 'cut_intro_1.gif', dur: 3000, sound: 'vo_intro_1.wav' },
- *         { bg: 'cut_intro_2.gif', dur: 2500 },
- *         { anim: 'char_x.gif', dur: 2000 } // char clip over current bg
+ *         { bg: 'cut_intro_1.png', dur: 3000, sound: 'vo_intro_1.wav' },
+ *         { bg: 'cut_intro_2.png', dur: 2500 },
+ *         { anim: 'char_x.png', dur: 2000 } // char clip over current bg
  *       ],
  *       then: 'go:bedroom', entryAnim: '...', setFlag: 'sawIntro'
  *     }
@@ -92,18 +94,32 @@
  *   clearFlag: 'x' or ['x', 'y'] clear after the click completes
  *   setFlagValue: with a single setFlag, set it to a specific value
  *
- * ART CONTRACT — everything except backgrounds is a full-frame 800x600
- * transparent GIF cel; scene data never contains art coordinates.
- * (Delivery stays GIF; make_sheets.py flattens stage art to PNG strips
- * for the canvas renderer and UI art to static PNGs — run it after any
- * art change. Scenes always reference the .gif names.)
- *   character clips: named explicitly in the scene (char_*.gif)
- *   gate:  gate_<id>_closed.gif  loops while blocked (whole prop!)
- *          gate_<id>_use.gif     one-shot when the right item is used
- *          gate_<id>_open.gif    loops afterwards
+ * ART CONTRACT — the game runs on PNGs; scene data never contains art
+ * coordinates.
+ *   STATIC art: one PNG (800x600 stage cel, or 40x40 icon/cursor).
+ *   ANIMATED art: a horizontal PNG strip — 800x600 frames side by
+ *   side — plus one entry in images/sheets.js:
+ *     "name.png": { "file": "name.png", "frames": N,
+ *                   "dur": <ms per frame>, "loop": 1 or 0 }
+ *   Scenes reference the name directly. No sheets.js entry = static.
+ *   Stage cels other than backgrounds are transparent PNGs.
+ *
+ * ART WORKFLOW — the art team never edits strips or sheets.js by hand:
+ *   1. author animated clips as GIFs in art/ (800x600; loop-forever
+ *      GIF = looping clip, play-once GIF = one-shot clip)
+ *   2. run:  python3 tools/make_sheets.py
+ *      -> writes the strips into images/ and updates images/sheets.js
+ *   Static art (icons, cursors, ui, single-frame cels) can be edited
+ *   directly as PNGs in images/. If the GIF sources are ever lost,
+ *   `python3 tools/make_sheets.py --from-pngs` rebuilds art/ from the
+ *   current strips.
+ *   character clips: named explicitly in the scene (char_*.png)
+ *   gate:  gate_<id>_closed.png  loops while blocked (whole prop!)
+ *          gate_<id>_use.png     one-shot when the right item is used
+ *          gate_<id>_open.png    loops afterwards
  *          The prop lives ONLY in the cels, never in the background,
  *          and the last _use frame must match _open.
- *   item:  item_<scene>_<id>.gif (full-frame cel of it in that room)
+ *   item:  item_<scene>_<id>.png (full-frame cel of it in that room)
  *          + icon_<id> (40x40 hotbar; also the held-item cursor)
  */
 
@@ -116,8 +132,8 @@ window.CUTSCENES = {
   intro: {
     skip: true,
     steps: [
-      { bg: 'cut_intro_title.gif', dur: 2600 },
-      { bg: 'cut_intro_story.gif', dur: 2600 }
+      { bg: 'cut_intro_title.png', dur: 2600 },
+      { bg: 'cut_intro_story.png', dur: 2600 }
     ],
     then: 'go:bedroom'
   },
@@ -126,7 +142,7 @@ window.CUTSCENES = {
   // the medal appears). Triggered by the gnome gate's locked action.
   gnome_dance: {
     steps: [
-      { anim: 'cut_gnome_dance.gif', dur: 2400, sound: 'pickup.wav' }
+      { anim: 'cut_gnome_dance.png', dur: 2400, sound: 'pickup.wav' }
     ]
     // no `then`: back to garden idle, where gnomePaid reveals the medal
   }
@@ -143,21 +159,21 @@ window.COMBINE_HINT = 'vo_combine_wrong.wav';
 window.SCENES = {
 
   bedroom: {
-    bg: 'bg_bedroom.gif',
-    idle: 'char_bedroom_idle.gif',
-    failAnim: 'char_bedroom_cant_use.gif',
+    bg: 'bg_bedroom.png',
+    idle: 'char_bedroom_idle.png',
+    failAnim: 'char_bedroom_cant_use.png',
     failDur: 1000,
     objects: [
       { item: 'key', area: [560, 260, 720, 400],
-        anim: 'char_bedroom_pick_key.gif', dur: 2000 },
+        anim: 'char_bedroom_pick_key.png', dur: 2000 },
 
       { area: [40, 120, 220, 420], cursor: 'left',
-        anim: 'char_bedroom_exit_left.gif', dur: 1400,
+        anim: 'char_bedroom_exit_left.png', dur: 1400,
         then: 'go:hallway',
-        entryAnim: 'char_hallway_from_bedroom.gif', entryDur: 1400 },
+        entryAnim: 'char_hallway_from_bedroom.png', entryDur: 1400 },
 
       { area: [300, 350, 480, 470],
-        anim: 'char_bedroom_look_bed.gif', dur: 2800,
+        anim: 'char_bedroom_look_bed.png', dur: 2800,
         sound: 'vo_bedroom_bed_nap.wav',
         items: {
           key: { hint: 'vo_key_wrong.wav', hintDur: 2100 }
@@ -166,15 +182,15 @@ window.SCENES = {
   },
 
   hallway: {
-    bg: 'bg_hallway.gif',
-    idle: 'char_hallway_idle.gif',
-    failAnim: 'char_hallway_cant_use.gif',
+    bg: 'bg_hallway.png',
+    idle: 'char_hallway_idle.png',
+    failAnim: 'char_hallway_cant_use.png',
     failDur: 1000,
     objects: [
       { area: [0, 150, 180, 450], cursor: 'left',
-        anim: 'char_hallway_exit_left.gif', dur: 1400,
+        anim: 'char_hallway_exit_left.png', dur: 1400,
         then: 'go:bedroom',
-        entryAnim: 'char_bedroom_from_hallway.gif', entryDur: 1400 },
+        entryAnim: 'char_bedroom_from_hallway.png', entryDur: 1400 },
 
       { gate: 'hallway_gardendoor', area: [620, 150, 800, 450],
         locked: {
@@ -184,45 +200,45 @@ window.SCENES = {
         },
         open: {
           cursor: 'right',
-          anim: 'char_hallway_exit_right.gif', dur: 1400,
+          anim: 'char_hallway_exit_right.png', dur: 1400,
           sound: 'door.wav',
           then: 'go:garden',
-          entryAnim: 'char_garden_from_hallway.gif', entryDur: 1400
+          entryAnim: 'char_garden_from_hallway.png', entryDur: 1400
         } },
 
       { area: [300, 200, 500, 420],
-        objAnim: 'obj_hallway_look_painting.gif', dur: 900,
+        objAnim: 'obj_hallway_look_painting.png', dur: 900,
         sound: 'pickup.wav'},
 
       { item: 'string', area: [510, 380, 620, 460],
-        anim: 'char_hallway_pick_string.gif', dur: 2000 }
+        anim: 'char_hallway_pick_string.png', dur: 2000 }
     ]
   },
 
   garden: {
-    bg: 'bg_garden.gif',
-    idle: 'char_garden_idle.gif',
-    failAnim: 'char_garden_cant_use.gif',
+    bg: 'bg_garden.png',
+    idle: 'char_garden_idle.png',
+    failAnim: 'char_garden_cant_use.png',
     failDur: 1000,
     objects: [
       { area: [0, 150, 180, 450], cursor: 'left',
-        anim: 'char_garden_exit_left.gif', dur: 1400,
+        anim: 'char_garden_exit_left.png', dur: 1400,
         then: 'go:hallway',
-        entryAnim: 'char_hallway_from_garden.gif', entryDur: 1400 },
+        entryAnim: 'char_hallway_from_garden.png', entryDur: 1400 },
 
       { item: 'stick', area: [190, 380, 300, 460],
-        anim: 'char_garden_pick_stick.gif', dur: 2000 },
+        anim: 'char_garden_pick_stick.png', dur: 2000 },
 
       { area: [400, 300, 600, 470], when: { flag: 'coinFished', value: false },
-        anim: 'char_garden_look_fountain.gif', dur: 900,
+        anim: 'char_garden_look_fountain.png', dur: 900,
         items: {
-          fishingrod: { anim: 'char_garden_fish.gif', dur: 2000,
+          fishingrod: { anim: 'char_garden_fish.png', dur: 2000,
                         sound: 'pickup.wav',
                         then: 'pick:coin', setFlag: 'coinFished' }
         } },
 
       { area: [400, 300, 600, 470], when: { flag: 'coinFished' },
-        anim: 'char_garden_look_fountain.gif', dur: 900,
+        anim: 'char_garden_look_fountain.png', dur: 900,
         items: {
           fishingrod: { hint: 'vo_fountain_empty.wav', hintDur: 1100 }
         } },
@@ -237,7 +253,7 @@ window.SCENES = {
         open: { sound: 'select.wav' } },
 
       { item: 'medal', when: { flag: 'gnomePaid' }, area: [640, 410, 735, 470],
-        anim: 'char_garden_pick_medal.gif', dur: 2000 }
+        anim: 'char_garden_pick_medal.png', dur: 2000 }
     ]
   }
 
