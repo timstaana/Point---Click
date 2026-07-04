@@ -192,17 +192,20 @@
     var ty = (vh - GAME_H * currentScale) / 2;
     currentTx = tx;
     currentTy = ty;
-    if (typeof gameEl.style.zoom !== 'undefined') {
-      // WebKit: transform rasterizes at 800x600 then GPU-smooths, ignoring
-      // image-rendering. `zoom` scales through layout instead, so images
-      // resample with the crisp-pixel hints. zoom multiplies the element's
-      // own lengths too, hence the division.
+    // zoom scales through layout, which keeps image-rendering (crisp
+    // pixels) working on desktop WebKit — but on iOS every animated GIF
+    // frame then repaints the whole zoomed subtree in software, which
+    // flashes constantly on the iPad. Touch devices get transform (GPU
+    // composited, slight smoothing on a non-retina panel); desktop
+    // WebKit gets zoom; Gecko gets transform + -moz-crisp-edges.
+    var useZoom = typeof gameEl.style.zoom !== 'undefined' &&
+                  !('ontouchstart' in window);
+    if (useZoom) {
+      // zoom multiplies the element's own lengths too, hence the division
       gameEl.style.zoom = currentScale;
       gameEl.style.left = (tx / currentScale) + 'px';
       gameEl.style.top  = (ty / currentScale) + 'px';
     } else {
-      // Gecko (TenFourFox): no zoom, but -moz-crisp-edges is honoured
-      // under transforms, so transform scaling stays crisp.
       gameEl.style.left = tx + 'px';
       gameEl.style.top  = ty + 'px';
       gameEl.style.transform = 'scale(' + currentScale + ')';

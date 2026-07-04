@@ -46,12 +46,16 @@ body {
   background: #000;
 }
 
-/* Stacked layers inside #stage. Only the hotspot layer catches clicks. */
+/* Stacked layers inside #stage. Only the hotspot layer catches clicks.
+   translateZ(0) gives each layer its own GPU surface on WebKit, so an
+   animated GIF frame repaints only its layer, not the whole stage
+   (crucial on the iPad). -webkit- only: Gecko needn't pay for layers. */
 .layer {
   position: absolute;
   top: 0;
   left: 0;
   border: 0;
+  -webkit-transform: translateZ(0);
 }
 .layer.full {
   width: 800px;
