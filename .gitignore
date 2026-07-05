@@ -11,7 +11,13 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
-.DS_Store
 .idea/
 *.swp
 *.swo
+
+# editor save backups (see server.js /api/scenes)
+backups/
+
+# python tooling
+__pycache__/
+*.pyc

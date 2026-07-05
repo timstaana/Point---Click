@@ -35,7 +35,7 @@
  *                     e.g. "It's locked, I need a key" — hintDur should
  *                     match the line so the character holds the fail pose
  *   items:            reactions to SPECIFIC items being used here:
- *       items: { key: 'vo_key_wrong.wav' }              rejection line
+ *       items: { key: 'vo_generic_key_wrong.wav' }              rejection line
  *       items: { key: { hint: '...', hintDur: 2100 } }  rejection, timed
  *       items: { bucket: { consume: true, anim, dur, then } }  real action
  *
@@ -120,7 +120,14 @@
  *      -> writes PNGs into images/ and updates images/sheets.js
  *   If the GIF sources are ever lost, `python3 tools/make_sheets.py
  *   --from-pngs` rebuilds all of art/ from images/.
- *   character clips: named explicitly in the scene (char_*.png)
+ *   character clips: named explicitly in the scene, but ALWAYS
+ *   char_<room>_<action>.png so the editor can offer the right clips
+ *   per room:
+ *     char_<room>_idle          char_<room>_cant_use
+ *     char_<room>_look_<thing>  char_<room>_pick_<item>
+ *     char_<room>_use_<item>    char_<room>_exit_<direction>
+ *     char_<room>_from_<other>  (walk-in when arriving from <other>)
+ *   room overlays: obj_<room>_<action>.png
  *   gate:  gate_<id>_closed.png  loops while blocked (whole prop!)
  *          gate_<id>_use.png     one-shot when the right item is used
  *          gate_<id>_open.png    loops afterwards
@@ -128,137 +135,268 @@
  *          and the last _use frame must match _open.
  *   item:  item_<scene>_<id>.png (full-frame cel of it in that room)
  *          + icon_<id> (40x40 hotbar; also the held-item cursor)
+ *
+ * SOUND NAMING — same idea as art, so the editor can scope per room:
+ *   vo_<room>_<subject>_<what>.wav   room voice lines
+ *   vo_generic_<what>.wav            shared lines (any room)
+ *   <name>.wav                       plain sfx (select/pickup/door/fail)
+ *
+ * START — window.START_ROOM names the first room (default 'bedroom');
+ * window.START_CUTSCENE optionally plays a cutscene before it appears.
  */
 
-// Played once at boot (before the first room). Optional.
-window.START_CUTSCENE = 'intro';
+window.START_ROOM = "bedroom";
+
+window.START_CUTSCENE = "intro";
 
 window.CUTSCENES = {
-
-  // Title cards at game start; tap to skip, lands in the bedroom.
-  intro: {
-    skip: true,
-    steps: [
-      { bg: 'cut_intro_title.png', dur: 2600 },
-      { bg: 'cut_intro_story.png', dur: 2600 }
+  "intro": {
+    "skip": true,
+    "steps": [
+      {
+        "bg": "cut_intro_title.png",
+        "dur": 2600
+      },
+      {
+        "bg": "cut_intro_story.png",
+        "dur": 2600
+      }
     ],
-    then: 'go:bedroom'
+    "then": "go:bedroom",
+    "entryAnim": "char_bedroom_from_hallway.png"
   },
-
-  // The gnome celebrates his coin (plays over the garden, right before
-  // the medal appears). Triggered by the gnome gate's locked action.
-  gnome_dance: {
-    steps: [
-      { anim: 'cut_gnome_dance.png', dur: 2400, sound: 'pickup.wav' }
+  "gnome_dance": {
+    "steps": [
+      {
+        "anim": "cut_gnome_dance.png",
+        "dur": 2400,
+        "sound": "pickup.wav"
+      }
     ]
-    // no `then`: back to garden idle, where gnomePaid reveals the medal
   }
-
 };
 
 window.COMBINE = [
-  { parts: ['stick', 'string'], makes: 'fishingrod' }
+  {
+    "parts": [
+      "stick",
+      "string"
+    ],
+    "makes": "fishingrod"
+  }
 ];
 
-// played when two hotbar items have no recipe (remove to switch selection instead)
-window.COMBINE_HINT = 'vo_combine_wrong.wav';
+window.COMBINE_HINT = "vo_generic_combine_wrong.wav";
 
 window.SCENES = {
-
-  bedroom: {
-    bg: 'bg_bedroom.png',
-    idle: 'char_bedroom_idle.png',
-    failAnim: 'char_bedroom_cant_use.png',
-        objects: [
-      { item: 'key', area: [560, 260, 720, 400],
-        anim: 'char_bedroom_pick_key.png' },
-
-      { area: [40, 120, 220, 420], cursor: 'left',
-        anim: 'char_bedroom_exit_left.png',
-        then: 'go:hallway',
-        entryAnim: 'char_hallway_from_bedroom.png' },
-
-      { area: [300, 350, 480, 470],
-        anim: 'char_bedroom_look_bed.png', dur: 2800,
-        sound: 'vo_bedroom_bed_nap.wav',
-        items: {
-          key: { hint: 'vo_key_wrong.wav', hintDur: 2100 }
-        } }
+  "bedroom": {
+    "bg": "bg_bedroom.png",
+    "idle": "char_bedroom_idle.png",
+    "failAnim": "char_bedroom_cant_use.png",
+    "objects": [
+      {
+        "item": "key",
+        "area": [
+          599,
+          280,
+          675,
+          328
+        ],
+        "anim": "char_bedroom_pick_key.png"
+      },
+      {
+        "area": [
+          41,
+          122,
+          221,
+          422
+        ],
+        "cursor": "left",
+        "anim": "char_bedroom_exit_left.png",
+        "then": "go:hallway",
+        "entryAnim": "char_hallway_from_bedroom.png"
+      },
+      {
+        "area": [
+          300,
+          332,
+          481,
+          420
+        ],
+        "anim": "char_bedroom_look_bed.png",
+        "dur": 2800,
+        "sound": "vo_bedroom_bed_nap.wav",
+        "items": {
+          "key": {
+            "hint": "vo_generic_key_wrong.wav",
+            "hintDur": 2100
+          }
+        }
+      }
     ]
   },
-
-  hallway: {
-    bg: 'bg_hallway.png',
-    idle: 'char_hallway_idle.png',
-    failAnim: 'char_hallway_cant_use.png',
-        objects: [
-      { area: [0, 150, 180, 450], cursor: 'left',
-        anim: 'char_hallway_exit_left.png',
-        then: 'go:bedroom',
-        entryAnim: 'char_bedroom_from_hallway.png' },
-
-      { gate: 'hallway_gardendoor', area: [620, 150, 800, 450],
-        locked: {
-          needs: 'key', sound: 'door.wav',
-          cursor: 'right',
-          hint: 'vo_gardendoor_locked.wav', hintDur: 2500
+  "hallway": {
+    "bg": "bg_hallway.png",
+    "idle": "char_hallway_idle.png",
+    "failAnim": "char_hallway_cant_use.png",
+    "objects": [
+      {
+        "area": [
+          13,
+          151,
+          180,
+          451
+        ],
+        "cursor": "left",
+        "anim": "char_hallway_exit_left.png",
+        "then": "go:bedroom",
+        "entryAnim": "char_bedroom_from_hallway.png"
+      },
+      {
+        "gate": "hallway_gardendoor",
+        "area": [
+          620,
+          150,
+          793,
+          450
+        ],
+        "locked": {
+          "needs": "key",
+          "sound": "door.wav",
+          "cursor": "right",
+          "hint": "vo_hallway_gardendoor_locked.wav",
+          "hintDur": 2500
         },
-        open: {
-          cursor: 'right',
-          anim: 'char_hallway_exit_right.png',
-          sound: 'door.wav',
-          then: 'go:garden',
-          entryAnim: 'char_garden_from_hallway.png'
-        } },
-
-      { area: [300, 200, 500, 420],
-        objAnim: 'obj_hallway_look_painting.png',
-        sound: 'pickup.wav'},
-
-      { item: 'string', area: [510, 380, 620, 460],
-        anim: 'char_hallway_pick_string.png' }
+        "open": {
+          "cursor": "right",
+          "anim": "char_hallway_exit_right.png",
+          "sound": "door.wav",
+          "then": "go:garden",
+          "entryAnim": "char_garden_from_hallway.png"
+        }
+      },
+      {
+        "area": [
+          311,
+          211,
+          489,
+          400
+        ],
+        "objAnim": "obj_hallway_look_painting.png",
+        "sound": "pickup.wav",
+        "anim": "char_hallway_look_painting.png"
+      },
+      {
+        "item": "string",
+        "area": [
+          517,
+          390,
+          578,
+          434
+        ],
+        "anim": "char_hallway_pick_string.png"
+      }
     ]
   },
-
-  garden: {
-    bg: 'bg_garden.png',
-    idle: 'char_garden_idle.png',
-    failAnim: 'char_garden_cant_use.png',
-        objects: [
-      { area: [0, 150, 180, 450], cursor: 'left',
-        anim: 'char_garden_exit_left.png',
-        then: 'go:hallway',
-        entryAnim: 'char_hallway_from_garden.png' },
-
-      { item: 'stick', area: [190, 380, 300, 460],
-        anim: 'char_garden_pick_stick.png' },
-
-      { area: [400, 300, 600, 470], when: { flag: 'coinFished', value: false },
-        anim: 'char_garden_look_fountain.png',
-        items: {
-          fishingrod: { anim: 'char_garden_fish.png',
-                        sound: 'pickup.wav',
-                        then: 'pick:coin', setFlag: 'coinFished' }
-        } },
-
-      { area: [400, 300, 600, 470], when: { flag: 'coinFished' },
-        anim: 'char_garden_look_fountain.png',
-        items: {
-          fishingrod: { hint: 'vo_fountain_empty.wav', hintDur: 1100 }
-        } },
-
-      { gate: 'garden_gnome', area: [620, 320, 780, 470],
-        locked: {
-          needs: 'coin', sound: 'pickup.wav',
-          hint: 'vo_gnome_wants.wav', hintDur: 3100,
-          setFlag: 'gnomePaid',
-          then: 'cut:gnome_dance'
+  "garden": {
+    "bg": "bg_garden.png",
+    "idle": "char_garden_idle.png",
+    "failAnim": "char_garden_cant_use.png",
+    "objects": [
+      {
+        "area": [
+          6,
+          155,
+          182,
+          455
+        ],
+        "cursor": "left",
+        "anim": "char_garden_exit_left.png",
+        "then": "go:hallway",
+        "entryAnim": "char_hallway_from_garden.png"
+      },
+      {
+        "item": "stick",
+        "area": [
+          196,
+          379,
+          285,
+          439
+        ],
+        "anim": "char_garden_pick_stick.png"
+      },
+      {
+        "area": [
+          400,
+          300,
+          600,
+          470
+        ],
+        "when": {
+          "flag": "coinFished",
+          "value": false
         },
-        open: { sound: 'select.wav' } },
-
-      { item: 'medal', when: { flag: 'gnomePaid' }, area: [640, 410, 735, 470],
-        anim: 'char_garden_pick_medal.png' }
+        "anim": "char_garden_look_fountain.png",
+        "items": {
+          "fishingrod": {
+            "anim": "char_garden_use_fishingrod.png",
+            "sound": "pickup.wav",
+            "then": "pick:coin",
+            "setFlag": "coinFished"
+          }
+        }
+      },
+      {
+        "area": [
+          400,
+          300,
+          600,
+          470
+        ],
+        "when": {
+          "flag": "coinFished"
+        },
+        "anim": "char_garden_look_fountain.png",
+        "items": {
+          "fishingrod": {
+            "hint": "vo_garden_fountain_empty.wav",
+            "hintDur": 1100
+          }
+        }
+      },
+      {
+        "gate": "garden_gnome",
+        "area": [
+          646,
+          307,
+          753,
+          477
+        ],
+        "locked": {
+          "needs": "coin",
+          "sound": "pickup.wav",
+          "hint": "vo_garden_gnome_wants.wav",
+          "hintDur": 3100,
+          "setFlag": "gnomePaid",
+          "then": "cut:gnome_dance"
+        },
+        "open": {
+          "sound": "select.wav"
+        }
+      },
+      {
+        "item": "medal",
+        "when": {
+          "flag": "gnomePaid"
+        },
+        "area": [
+          635,
+          403,
+          693,
+          466
+        ],
+        "anim": "char_garden_pick_medal.png"
+      }
     ]
   }
-
 };

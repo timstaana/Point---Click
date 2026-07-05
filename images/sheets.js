@@ -65,9 +65,9 @@ window.SHEETS = {
   "frames": 7,
   "loop": 0
  },
- "char_garden_fish.png": {
+ "char_garden_use_fishingrod.png": {
   "dur": 250,
-  "file": "char_garden_fish.png",
+  "file": "char_garden_use_fishingrod.png",
   "frames": 8,
   "loop": 0
  },

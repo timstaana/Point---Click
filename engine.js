@@ -31,7 +31,7 @@
 
   var scenes = window.SCENES;
   var items = window.ITEMS || {};
-  var current = 'bedroom';
+  var current = window.START_ROOM || 'bedroom';
   var busy = false;
   var inv = [];
   var spent = {};
