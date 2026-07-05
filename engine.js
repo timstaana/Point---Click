@@ -1,6 +1,12 @@
 /* Point & Click — single-canvas cel engine with tap-to-select item use.
  * ES5 safe. Targets: Safari 8+ (iPad mini 1, iOS 8), TenFourFox / PowerFox.
  *
+ * Data: one window.GAME object (scenes.js, written by the editor).
+ * Hotspots are STEPS: after/afterNot (step-completion deps — the only
+ * story state is the doneSteps set), needs (a lock, with useAnim,
+ * hint, gateArt, onUnlock), and the fixed consequence order gives -> plays ->
+ * goes. See the scenes.js header for the full schema.
+ *
  * Rendering model — everything painted onto ONE <canvas> (iOS 8 flashes
  * when transparent animated layers sit in the DOM, so we never do
  * that). Channels composited in order each tick:
@@ -29,9 +35,9 @@
 (function () {
   'use strict';
 
-  var rooms = window.SCENES;
-  var items = window.ITEMS || {};
-  var currentRoom = window.START_ROOM || 'bedroom';
+  var GAME = window.GAME || {};
+  var rooms = GAME.rooms || {};
+  var currentRoom = (GAME.start && GAME.start.room) || 'bedroom';
   var busy = false;
   var inv = [];
   var spent = {};
@@ -40,12 +46,14 @@
   var gameEl, canvasEl, ctx, hotspotLayer, hotbarEl;
   var currentScale = 1;
   var lastTouchTime = 0;
-  var storyFlags = {};
+  // the only story state: doneSteps[stepId] once a step completes
+  // (unlock for locked hotspots, finish for cutscenes)
+  var doneSteps = {};
   var objectStates = {};
 
   // Bump when debugging stale caches on devices; shown in the letterbox
   // corner so you can tell at a glance which build a device is running.
-  var BUILD = 'b9';
+  var BUILD = 'b10'; // step-schema rewrite (window.GAME, no flags)
 
   // iOS home-screen (standalone) mode: Web Audio there can pass every
   // check (clock running, no errors) yet route no sound to the speaker,
@@ -91,8 +99,7 @@
   };
 
   function iconFor(itemId) {
-    var meta = items[itemId] || {};
-    return meta.icon || 'icon_' + itemId + '.png';
+    return 'icon_' + itemId + '.png';
   }
 
   /* ---------- software cursor ----------
@@ -225,12 +232,12 @@
     var sn, oi, objs;
     for (sn in rooms) {
       if (!rooms.hasOwnProperty(sn)) continue;
-      objs = rooms[sn].objects || [];
+      objs = rooms[sn].hotspots || [];
       for (oi = 0; oi < objs.length; oi++) {
-        if (objs[oi].item) ensureItemCursor(objs[oi].item);
+        if (objs[oi].gives) ensureItemCursor(objs[oi].gives);
       }
     }
-    var combos = window.COMBINE || [];
+    var combos = GAME.combine || [];
     for (var ci = 0; ci < combos.length; ci++) {
       ensureItemCursor(combos[ci].makes);
       preload(iconFor(combos[ci].makes));
@@ -241,7 +248,7 @@
     for (var sk in defaults) {
       if (defaults.hasOwnProperty(sk)) warmSound(defaults[sk], null);
     }
-    if (window.COMBINE_HINT) warmSound(window.COMBINE_HINT, null);
+    if (GAME.combineHint) warmSound(GAME.combineHint, null);
     initHotbar();
     renderHotbar();
     var stamp = document.createElement('div');
@@ -254,8 +261,8 @@
     // START_CUTSCENE is declared, it plays first (also fully loaded).
     gameEl.style.visibility = 'hidden';
     preloadRoom(currentRoom, 'ui_hotbar.png', function () {
-      var sc = window.START_CUTSCENE;
-      if (sc && window.CUTSCENES && window.CUTSCENES[sc]) {
+      var sc = GAME.start && GAME.start.play;
+      if (sc && GAME.cutscenes && GAME.cutscenes[sc]) {
         preloadCutscene(sc, function () {
           gameEl.style.visibility = '';
           playCutscene(sc);
@@ -637,17 +644,19 @@
   }
 
   /* ---------- cutscenes ----------
-   * window.CUTSCENES[name] = { steps: [...], skip?, then?, setFlag? }.
+   * GAME.cutscenes[name] = { steps: [...], skip?, goes?, entryAnim? }.
    * Each step is { bg?, anim?, dur, sound? } using the same full-frame
    * clips as everything else: bg swaps the backdrop (and clears the
    * character unless the step also has anim); anim alone plays the
    * character clip over the current backdrop, so a cutscene can run in
-   * the room or on its own art. When the steps end the cutscene object
-   * itself is dispatched — then/setFlag/entryAnim all work as on any
-   * hotspot. Trigger from anywhere with then: 'cut:name'. */
-  function playCutscene(name) {
-    var cs = (window.CUTSCENES || {})[name];
+   * the room or on its own art. Finishing marks the cutscene done
+   * (that's what `after: [name]` elsewhere waits for), then walks to
+   * `goes` — the cutscene's own, or the triggering step's, passed in
+   * as `cont`. Trigger from any hotspot with plays: 'name'. */
+  function playCutscene(name, cont) {
+    var cs = (GAME.cutscenes || {})[name];
     if (!cs || !cs.steps || !cs.steps.length) {
+      doneSteps[name] = true;
       showIdle();
       return;
     }
@@ -658,19 +667,22 @@
     clearItems();
     clearObject();
     // the follow-up room loads while the cutscene plays
-    if (cs.then && cs.then.indexOf('go:') === 0) {
-      preloadRoom(cs.then.substring(3), cs.entryAnim, null);
-    }
+    var next = (cont && cont.goes) ? cont : cs;
+    if (next.goes) preloadRoom(next.goes, next.entryAnim, null);
     var i = 0;
     var timer = null;
     function finish() {
       cutsceneActive = false;
       setBusy(false);
-      // staying in (or returning to) a room: restore its backdrop
-      if (!cs.then || cs.then.indexOf('go:') !== 0) {
-        swapBg(rooms[currentRoom].bg);
+      doneSteps[name] = true;
+      if (next.goes) {
+        dispatch({ goes: next.goes, entryAnim: next.entryAnim,
+                   entryDur: next.entryDur });
+        return;
       }
-      dispatch(cs);
+      // staying in (or returning to) a room: restore its backdrop
+      swapBg(rooms[currentRoom].bg);
+      showIdle();
     }
     function step() {
       if (i >= cs.steps.length) {
@@ -707,19 +719,12 @@
     step();
   }
 
-  /* ---------- story-flag conditions ----------
-   * `when` is one condition or an array of conditions that must ALL hold
-   * (the AND of a puzzle dependency chart). For OR, list the object more
-   * than once with different `when`s — every matching object renders. */
-  function condMatches(c) {
-    if (!c || !c.flag) return true;
-    var flagValue = storyFlags[c.flag];
-    if (c.value === undefined) return !!flagValue;
-    if (c.value === false) return !flagValue;
-    return flagValue === c.value;
-  }
-
-  function eachFlag(v, fn) {
+  /* ---------- step-completion conditions ----------
+   * `after` lists step ids that must ALL be done; `afterNot` ids that
+   * must not be (a hotspot's own id in afterNot = "until I'm done").
+   * For OR, list the hotspot more than once — every matching one
+   * renders. This is the whole puzzle-dependency system: no flags. */
+  function eachId(v, fn) {
     if (!v) return;
     if (Array.isArray(v)) {
       for (var i = 0; i < v.length; i++) fn(v[i]);
@@ -728,15 +733,11 @@
     }
   }
 
-  function whenMatches(when) {
-    if (!when) return true;
-    if (Array.isArray(when)) {
-      for (var i = 0; i < when.length; i++) {
-        if (!condMatches(when[i])) return false;
-      }
-      return true;
-    }
-    return condMatches(when);
+  function afterMatches(o) {
+    var ok = true;
+    eachId(o.after, function (id) { if (!doneSteps[id]) ok = false; });
+    eachId(o.afterNot, function (id) { if (doneSteps[id]) ok = false; });
+    return ok;
   }
 
   /* ---------- room objects ---------- */
@@ -747,7 +748,7 @@
   }
 
   function renderRoomObjects(room) {
-    renderObjects(room.objects);
+    renderObjects(room.hotspots);
   }
 
   var preloaded = {};
@@ -794,17 +795,17 @@
     var assets = scanAssets(room);
     var art = assets.art;
     var i;
-    var list = room.objects || [];
+    var list = room.hotspots || [];
     for (i = 0; i < list.length; i++) {
       var o = list[i];
-      if (o.item) {
-        art['item_' + name + '_' + o.item + '.png'] = true;
-        art[iconFor(o.item)] = true;
+      if (isPickup(o)) {
+        art['item_' + name + '_' + o.gives + '.png'] = true;
+        art[iconFor(o.gives)] = true;
       }
-      if (o.gate) {
-        art['gate_' + o.gate + '_closed.png'] = true;
-        art['gate_' + o.gate + '_use.png'] = true;
-        art['gate_' + o.gate + '_open.png'] = true;
+      if (o.gateArt) {
+        art['gate_' + o.gateArt + '_closed.png'] = true;
+        art['gate_' + o.gateArt + '_use.png'] = true;
+        art['gate_' + o.gateArt + '_open.png'] = true;
       }
     }
     return assets;
@@ -875,26 +876,32 @@
   }
 
   function preloadCutscene(name, cb) {
-    preloadAssets(scanAssets((window.CUTSCENES || {})[name] || {}), null, cb);
+    preloadAssets(scanAssets((GAME.cutscenes || {})[name] || {}), null, cb);
   }
 
-  // Pickups: shorthand for "an item lying in the room". Art is two files
-  // named after the item id:
+  // A pickup is a hotspot whose tap just hands over its `gives` item —
+  // it lies in the room as a cel. Steps that ALSO lock/travel/play keep
+  // their gives as a consequence instead (no cel).
+  function isPickup(o) {
+    return !!o.gives && !o.needs && !o.plays && !o.goes;
+  }
+
+  // Pickups: art is two files named after the item id:
   //   item_<room>_<id>.png (full-frame cel) / icon_<id>.png (40x40 icon)
   function expandPickup(obj) {
-    if (!obj.item) return obj;
-    preload(iconFor(obj.item));
+    if (!isPickup(obj)) return obj;
+    preload(iconFor(obj.gives));
     return {
-      id: obj.item,
-      src: 'item_' + currentRoom + '_' + obj.item + '.png',
-      area: obj.area, when: obj.when,
+      id: obj.gives, // hasItem/spent logic keys off the item id
+      stepId: obj.id,
+      src: 'item_' + currentRoom + '_' + obj.gives + '.png',
+      area: obj.area, after: obj.after, afterNot: obj.afterNot,
       anim: obj.anim, objAnim: obj.objAnim, dur: obj.dur,
       sound: obj.sound,
-      failAnim: obj.failAnim, failDur: obj.failDur, failThen: obj.failThen,
-      then: 'pick:' + obj.item,
+      failAnim: obj.failAnim, failDur: obj.failDur,
+      gives: obj.gives,
       cursor: obj.cursor,
-      hint: obj.hint, hintDur: obj.hintDur, items: obj.items,
-      setFlag: obj.setFlag, setFlagValue: obj.setFlagValue, clearFlag: obj.clearFlag
+      hint: obj.hint, hintDur: obj.hintDur, reactions: obj.reactions
     };
   }
 
@@ -908,42 +915,49 @@
     return o;
   }
 
-  // Gates: shorthand for "blocked until the right item is used" (locked
-  // door, NPC who wants something, ...). Expands to a two-state object;
-  // art is three full-frame cels named after the gate id:
+  // Locks: any hotspot with `needs` is blocked until that item is used
+  // on it. Expands to the same two-state runtime object as ever; the
+  // hotspot's base keys describe the OPEN behaviour, use*/hint the
+  // locked side, onUnlock what firing the lock causes. Optional
+  // gateArt names the prop cel trio:
   //   gate_<id>_closed.png / gate_<id>_use.png / gate_<id>_open.png
   function expandGate(obj) {
-    if (!obj.gate) return obj;
-    var stem = 'gate_' + obj.gate;
-    preload(stem + '_use.png');
-    preload(stem + '_open.png');
-    var locked = obj.locked || {};
-    var open = obj.open || {};
-    var openState = { src: stem + '_open.png' };
-    var k;
-    for (k in open) {
-      if (open.hasOwnProperty(k)) openState[k] = open[k];
+    if (!obj.needs) return obj;
+    var stem = obj.gateArt ? 'gate_' + obj.gateArt : null;
+    if (stem) {
+      preload(stem + '_use.png');
+      preload(stem + '_open.png');
     }
+    var un = obj.onUnlock || {};
+    var openState = {
+      anim: obj.anim, objAnim: obj.objAnim,
+      sound: obj.sound, dur: obj.dur,
+      gives: obj.gives, plays: obj.plays, goes: obj.goes,
+      entryAnim: obj.entryAnim, entryDur: obj.entryDur,
+      reactions: obj.reactions, cursor: obj.cursor
+    };
+    if (stem) openState.src = stem + '_open.png';
     return {
-      id: obj.gate,
+      id: obj.id,
+      stepId: obj.id,
       area: obj.area,
-      when: obj.when,
+      after: obj.after, afterNot: obj.afterNot,
       state: 'closed',
       states: {
         closed: {
-          src: stem + '_closed.png',
-          needs: locked.needs,
-          objAnim: stem + '_use.png',
-          dur: locked.dur || clipLength(stem + '_use.png') || 2000,
-          sound: locked.sound,
-          hint: locked.hint, hintDur: locked.hintDur,
-          failAnim: locked.failAnim, failDur: locked.failDur, failThen: locked.failThen,
-          items: locked.items, cursor: locked.cursor,
-          keepItem: locked.keepItem,
-          setFlag: locked.setFlag, setFlagValue: locked.setFlagValue,
-          clearFlag: locked.clearFlag,
-          then: locked.then,
-          entryAnim: locked.entryAnim, entryDur: locked.entryDur,
+          src: stem ? stem + '_closed.png' : undefined,
+          needs: obj.needs,
+          anim: obj.useAnim,
+          objAnim: stem ? stem + '_use.png' : undefined,
+          dur: obj.useDur || (stem ? clipLength(stem + '_use.png') || 2000
+                                   : undefined),
+          sound: obj.useSound,
+          hint: obj.hint, hintDur: obj.hintDur,
+          failAnim: obj.failAnim, failDur: obj.failDur,
+          reactions: obj.reactions, cursor: obj.cursor,
+          keepItem: obj.keepItem,
+          gives: un.gives, plays: un.plays, goes: un.goes,
+          entryAnim: un.entryAnim, entryDur: un.entryDur,
           setState: 'open'
         },
         open: openState
@@ -975,8 +989,9 @@
     clearHotspots();
     if (!list) return;
     for (var i = 0; i < list.length; i++) {
+      if (!list[i].stepId) list[i].stepId = list[i].id; // step identity
       var obj = normalizeAction(resolveObject(expandGate(expandPickup(list[i]))));
-      if (!whenMatches(obj.when) || isObjectSpent(obj)) continue;
+      if (!afterMatches(obj) || isObjectSpent(obj)) continue;
       if (obj.src) {
         channels.items.push(makeClip(obj.src));
       }
@@ -989,10 +1004,7 @@
 
   function isObjectSpent(obj) {
     if (obj.id && (hasItem(obj.id) || spent[obj.id])) return true;
-    if (obj.then && obj.then.indexOf('pick:') === 0) {
-      var id = obj.then.substring(5);
-      if (hasItem(id) || spent[id]) return true;
-    }
+    if (obj.gives && (hasItem(obj.gives) || spent[obj.gives])) return true;
     return false;
   }
 
@@ -1028,12 +1040,12 @@
 
   /* ---------- click and dispatch ---------- */
 
-  // Per-item interaction: the items-entry's props override the object's.
+  // Per-item interaction: the reaction-entry's props override the object's.
   function mergeEntry(h, entry) {
     var out = {};
     var k;
     for (k in h) {
-      if (h.hasOwnProperty(k) && k !== 'items') out[k] = h[k];
+      if (h.hasOwnProperty(k) && k !== 'reactions') out[k] = h[k];
     }
     for (k in entry) {
       if (entry.hasOwnProperty(k)) out[k] = entry[k];
@@ -1044,7 +1056,7 @@
   function handleClick(h) {
     if (busy) return;
     if (selectedItem) {
-      var entry = h.items && h.items[selectedItem];
+      var entry = h.reactions && h.reactions[selectedItem];
       if (entry) {
         if (typeof entry === 'string') entry = { hint: entry };
         normalizeAction(entry);
@@ -1072,8 +1084,8 @@
       // Held item + a room pickup that combines with it: play the
       // pickup's grab clip, then hand the recipe to dispatch — the
       // room item goes straight into the combine, never the hotbar.
-      if (h.then && h.then.indexOf('pick:') === 0) {
-        var combo = findCombo(selectedItem, h.then.substring(5));
+      if (h.gives) {
+        var combo = findCombo(selectedItem, h.gives);
         if (combo) {
           selectedItem = null;
           renderHotbar();
@@ -1094,14 +1106,14 @@
   function triggerHotspot(h) {
     setBusy(true);
     clearHotspots();
-    if (h.then && h.then.indexOf('go:') === 0) {
+    if (h.goes) {
       // head start: load the next room while the walk-out clip plays
-      preloadRoom(h.then.substring(3), h.entryAnim, null);
+      preloadRoom(h.goes, h.entryAnim, null);
     }
-    if (h.then && h.then.indexOf('cut:') === 0) {
-      preloadCutscene(h.then.substring(4), null);
+    if (h.plays) {
+      preloadCutscene(h.plays, null);
     }
-    if (!h.then && h.sound) {
+    if (!h.goes && !h.plays && !h.gives && h.sound) {
       playSfx('select', h);
     }
     if (h.objAnim) swapObject(h.objAnim);
@@ -1119,63 +1131,63 @@
     var room = rooms[currentRoom] || {};
     var failAnim = h.failAnim || room.failAnim || DEFAULT_FAIL_ANIM;
     var failDur  = h.failDur  || room.failDur  || clipLength(failAnim) || 900;
-    var failThen = h.failThen || room.failThen;
     setBusy(true);
     clearHotspots();
     swapChar(failAnim);
     window.setTimeout(function () {
       setBusy(false);
-      if (failThen) {
-        dispatch({ then: failThen });
-      } else {
-        showIdle();
-      }
+      showIdle();
     }, failDur);
   }
 
+  // A completed action's consequences run in a FIXED order:
+  //   done -> gives -> plays -> goes
+  // so "use coin on gnome" can hand an item, play its cutscene and
+  // walk somewhere, all from named keys — no `then` chains.
   function dispatch(h) {
-    var action = h.then || '';
-
     if (h.needs && !h.keepItem) consume(h.needs);
 
     if (h.setState && h.id) {
       objectStates[h.id] = h.setState;
     }
-    // setFlag / clearFlag accept one name or an array of names, so one
-    // action can satisfy several puzzle dependencies at once.
-    if (h.setFlagValue !== undefined && h.setFlag && !Array.isArray(h.setFlag)) {
-      storyFlags[h.setFlag] = h.setFlagValue;
-    } else {
-      eachFlag(h.setFlag, function (f) { storyFlags[f] = true; });
-    }
-    eachFlag(h.clearFlag, function (f) { delete storyFlags[f]; });
+    // the step is done — everything `after` it may now appear
+    if (h.stepId) doneSteps[h.stepId] = true;
 
     // Combine-at-hotspot: the room part is used up (unless the recipe
     // keeps it) and combineItems handles the rest — consuming the held
-    // part, adding the result, flags and sound.
+    // part, adding the result and sound.
     if (h.combo) {
-      if (action.indexOf('pick:') === 0) {
-        var part = action.substring(5);
-        if (!inKeeps(h.combo, part)) spent[part] = true;
-      }
+      if (h.gives && !inKeeps(h.combo, h.gives)) spent[h.gives] = true;
       combineItems(h.combo);
       showIdle();
       return;
     }
 
-    if (action.indexOf('cut:') === 0) {
-      var cut = action.substring(4);
-      // hold the current frame until the cutscene is fully loaded
+    if (h.gives) {
+      if (!hasItem(h.gives)) {
+        inv.push(h.gives);
+        renderHotbar();
+        playSfx('pickup', h);
+      }
+      spent[h.gives] = true;
+    }
+
+    if (h.plays) {
+      // hold the current frame until the cutscene is fully loaded;
+      // a `goes` on this same action continues after the cutscene
+      var cut = h.plays;
+      var cont = h.goes ? { goes: h.goes, entryAnim: h.entryAnim,
+                            entryDur: h.entryDur } : null;
       setBusy(true);
       preloadCutscene(cut, function () {
         setBusy(false);
-        playCutscene(cut);
+        playCutscene(cut, cont);
       });
       return;
     }
 
-    if (action.indexOf('go:') === 0) {
-      var target = action.substring(3);
+    if (h.goes) {
+      var target = h.goes;
       // stay in the current room (holding the walk-out's last frame,
       // wait cursor, no indicator) until the next room is fully loaded
       setBusy(true);
@@ -1185,18 +1197,6 @@
         enterRoom(target, h.entryAnim,
                    h.entryDur || clipLength(h.entryAnim) || 1200);
       });
-      return;
-    }
-
-    if (action.indexOf('pick:') === 0) {
-      var item = action.substring(5);
-      if (!hasItem(item)) {
-        inv.push(item);
-        renderHotbar();
-        playSfx('pickup', h);
-      }
-      spent[item] = true;
-      showIdle();
       return;
     }
 
@@ -1283,11 +1283,11 @@
   }
 
   /* ---------- combining items ----------
-   * window.COMBINE recipes: { parts: [a, b], makes: c, sound?, setFlag? }.
+   * GAME.combine recipes: { parts: [a, b], makes: c, keeps?, sound? }.
    * Select one part, tap the other in the hotbar. Both are consumed and
    * the result lands in the hotbar. No recipe -> just switch selection. */
   function findCombo(a, b) {
-    var list = window.COMBINE || [];
+    var list = GAME.combine || [];
     for (var i = 0; i < list.length; i++) {
       var p = list[i].parts;
       if (p && p.length === 2 &&
@@ -1312,7 +1312,7 @@
     }
     if (!hasItem(combo.makes)) inv.push(combo.makes);
     spent[combo.makes] = true; // never re-pickable from a room
-    eachFlag(combo.setFlag, function (f) { storyFlags[f] = true; });
+    doneSteps['make:' + combo.makes] = true; // steps can be `after` it
     selectedItem = null;
     playFile(combo.sound || sfxFile('pickup'));
     renderHotbar();
@@ -1327,12 +1327,12 @@
           combineItems(combo);
           return;
         }
-        // No recipe: with a COMBINE_HINT line, treat it as a failed
+        // No recipe: with a combineHint line, treat it as a failed
         // combine — the character plays the room's fail animation with
         // the line, same as using a wrong item on a hotspot. Without a
         // hint line, just switch the selection.
-        if (window.COMBINE_HINT) {
-          triggerWrongItem({ failSound: window.COMBINE_HINT }, itemId);
+        if (GAME.combineHint) {
+          triggerWrongItem({ failSound: GAME.combineHint }, itemId);
           return;
         }
       }

@@ -41,14 +41,15 @@
 (function () {
 'use strict';
 
-/* ---------- game data ---------- */
+/* ---------- game data (window.GAME, the step schema) ---------- */
 
-const SCENES = window.SCENES || {};
-const CUTSCENES = window.CUTSCENES || {};
-const COMBINE = window.COMBINE || [];
-let COMBINE_HINT = window.COMBINE_HINT || '';
-let START_CUT = window.START_CUTSCENE || '';
-let START_ROOM = window.START_ROOM || Object.keys(SCENES)[0] || '';
+const GAME = window.GAME || {};
+const SCENES = GAME.rooms = GAME.rooms || {};          // room id -> room
+const CUTSCENES = GAME.cutscenes = GAME.cutscenes || {};
+const COMBINE = GAME.combine = GAME.combine || [];
+let COMBINE_HINT = GAME.combineHint || '';
+let START_CUT = (GAME.start && GAME.start.play) || '';
+let START_ROOM = (GAME.start && GAME.start.room) || Object.keys(SCENES)[0] || '';
 
 /* ---------- editor state ---------- */
 
@@ -199,72 +200,46 @@ function autoHold(holder, animName, durKey, soundName) {
   else delete holder[durKey];
 }
 
-/* ---------- object model ---------- */
+/* ---------- object model ----------
+ * One hotspot shape (see the scenes.js header). A "pickup" is a
+ * hotspot whose only job is `gives`; a lock is just `needs` (+ the
+ * useAnim/useSound/gateArt/onUnlock keys); consequences are
+ * gives/plays/goes; dependencies are after/afterNot step-id lists. */
 
-/* Only two shapes: a "pickup" (an item lying in the room) and a "spot"
- * (everything else). What used to be separate Exit / Needs-item types
- * is now just properties of a spot: WHERE its tap leads ("afterwards")
- * and whether a LOCK wraps it. The data shapes stay exactly what the
- * engine expects — a lock is stored as the gate/locked/open form. */
+function isPickup(o) { return !!o.gives && !o.needs && !o.plays && !o.goes; }
+function objType(o) { return isPickup(o) ? 'pickup' : 'spot'; }
+function isLocked(o) { return !!o.needs; }
 
-function objType(o) { return o.item ? 'pickup' : 'spot'; }
-function isLocked(o) { return !!(o.gate || o.locked || o.states || o.needs); }
-
-// the holder of the plain tap action: the gate's open state, or o itself
-function tapHolder(o) {
-  return (o.gate || o.locked) ? (o.open = o.open || {}) : o;
+// give a spot a lock / take it away (the tap behaviour is untouched —
+// base keys already describe what happens once it's open)
+function addLock(o, needsItem) {
+  if (needsItem) o.needs = needsItem;
+}
+function removeLock(o) {
+  ['needs', 'hint', 'hintDur', 'useAnim', 'useSound', 'useDur',
+   'gateArt', 'onUnlock', 'keepItem'].forEach(k => { delete o[k]; });
 }
 
-function goTarget(then) {
-  return then && then.indexOf('go:') === 0 ? then.slice(3) : null;
-}
-
-// Wrap a spot's tap action in a lock: the action moves into the gate's
-// `open` state, so nothing the user set up is lost.
-function lockHotspot(o, needsItem, rn) {
-  if (o.gate || o.locked) return;
-  rn = rn || room;
-  const open = {};
-  ['anim', 'objAnim', 'sound', 'dur', 'then', 'entryAnim', 'entryDur',
-   'cursor', 'setFlag', 'setFlagValue', 'clearFlag'].forEach(k => {
-    if (k in o) { open[k] = o[k]; delete o[k]; }
-  });
-  const t = goTarget(open.then);
-  o.gate = rn + '_' + (t ? t + 'door' : 'lock');
-  o.locked = {};
-  if (needsItem) o.locked.needs = needsItem;
-  if (o.needs) { o.locked.needs = o.needs; delete o.needs; }
-  if (open.cursor) o.locked.cursor = open.cursor;
-  o.open = open;
-}
-
-// Remove the lock: the open-state action flattens back onto the spot.
-function unlockHotspot(o) {
-  const open = o.open || {};
-  delete o.gate; delete o.locked; delete o.open;
-  delete o.states; delete o.state; delete o.needs;
-  Object.keys(open).forEach(k => { o[k] = open[k]; });
-}
+// the step id whose completion the engine records for this hotspot
+function doneIdOf(o) { return o.id; }
 
 function objectCel(o, rn) {
-  if (o.item) return conv.itemCel(rn || room, o.item);
-  if (o.gate) return conv.gate(o.gate, 'closed');
+  if (isPickup(o)) return conv.itemCel(rn || room, o.gives);
+  if (o.gateArt) return conv.gate(o.gateArt, 'closed');
   if (o.src) return o.src;
   return null;
 }
 
 // Labels are derived from what the spot DOES, not a stored type.
 function objectLabel(o, i) {
-  if (o.item) return 'pickup: ' + o.item;
-  const act = (o.gate || o.locked) ? (o.open || {}) : o;
-  const lock = isLocked(o) ? ' 🔒' : '';
-  const g = goTarget(act.then);
-  if (g) return 'exit → ' + g + lock;
-  if (act.then && act.then.indexOf('cut:') === 0) return 'cutscene: ' + act.then.slice(4) + lock;
-  if (act.then && act.then.indexOf('pick:') === 0) return 'gives: ' + act.then.slice(5) + lock;
-  if (isLocked(o)) return 'locked: ' + (o.gate || (o.locked && o.locked.needs) || '#' + (i + 1));
+  if (isPickup(o)) return 'pickup: ' + o.gives;
+  const lock = o.needs ? ' 🔒' : '';
+  if (o.goes) return 'exit → ' + o.goes + lock;
+  if (o.plays) return 'cutscene: ' + o.plays + lock;
+  if (o.gives) return 'gives: ' + o.gives + lock;
+  if (o.needs) return 'locked: ' + (o.gateArt || o.needs);
   // name look spots after their clip: char_<room>_look_<thing>.png
-  const clip = act.anim || act.objAnim || '';
+  const clip = o.anim || o.objAnim || '';
   const at = clip.indexOf('_look_');
   if (at >= 0) return 'look: ' + clip.slice(at + 6).replace(/\.png$/, '');
   return 'look #' + (i + 1);
@@ -296,10 +271,10 @@ function bbox(area) {
 function ensureIds() {
   const taken = {};
   Object.keys(SCENES).forEach(rn => {
-    (SCENES[rn].objects || []).forEach(o => { if (o.id) taken[o.id] = 1; });
+    (SCENES[rn].hotspots || []).forEach(o => { if (o.id) taken[o.id] = 1; });
   });
   Object.keys(SCENES).forEach(rn => {
-    (SCENES[rn].objects || []).forEach(o => {
+    (SCENES[rn].hotspots || []).forEach(o => {
       if (o.id) return;
       let n = 1;
       while (taken['hs_' + rn + '_' + n]) n++;
@@ -311,7 +286,7 @@ function ensureIds() {
 
 function newHotspot(rn, props) {
   const o = props || {};
-  SCENES[rn].objects.push(o);
+  SCENES[rn].hotspots.push(o);
   ensureIds();
   return o;
 }
@@ -326,7 +301,7 @@ function newHotspot(rn, props) {
 function areaKey(o) { return bbox(o.area).join(','); }
 
 function groupIndices(idx) {
-  const objs = SCENES[room].objects || [];
+  const objs = SCENES[room].hotspots || [];
   const key = areaKey(objs[idx]);
   const out = [];
   objs.forEach((o, i) => { if (areaKey(o) === key) out.push(i); });
@@ -345,10 +320,11 @@ function areaGroups(objs) {
   return order.map(k => groups[k]);
 }
 
-function whenSummary(o) {
-  const conds = toList(o.when).filter(c => c && c.flag);
-  if (!conds.length) return 'always';
-  return 'when ' + conds.map(c => (c.value === false ? 'not ' : '') + c.flag).join(' & ');
+function afterSummary(o) {
+  const parts = toList(o.after).map(id => 'after ' + id)
+    .concat(toList(o.afterNot).map(id =>
+      (id === o.id ? 'until done' : 'until ' + id)));
+  return parts.length ? parts.join(' & ') : 'always';
 }
 
 /* ---------- cross-reference index ----------
@@ -356,19 +332,18 @@ function whenSummary(o) {
  * produced and consumed, and where every cutscene is triggered from.
  * A "ref" points back at the owning thing and can be jumped to. */
 
-// Visit every action-holder (hotspot + its locked/open/item-reaction
+// Visit every action-holder (hotspot + its onUnlock and item-reaction
 // sub-actions, and each cutscene) with a ref to its owner.
 function forEachActionHolder(cb) {
   Object.keys(SCENES).forEach(rn => {
-    (SCENES[rn].objects || []).forEach((o, i) => {
+    (SCENES[rn].hotspots || []).forEach((o, i) => {
       const ref = { kind: 'hotspot', room: rn, idx: i };
       cb(o, ref);
-      if (o.locked) cb(o.locked, ref);
-      if (o.open) cb(o.open, ref);
-      [o, o.locked, o.open].forEach(h => {
-        if (h && h.items) Object.keys(h.items).forEach(id => {
-          if (h.items[id] && typeof h.items[id] === 'object') cb(h.items[id], ref);
-        });
+      if (o.onUnlock) cb(o.onUnlock, ref);
+      if (o.reactions) Object.keys(o.reactions).forEach(id => {
+        if (o.reactions[id] && typeof o.reactions[id] === 'object') {
+          cb(o.reactions[id], ref);
+        }
       });
     });
   });
@@ -379,27 +354,30 @@ function forEachActionHolder(cb) {
 
 function buildRefs() {
   const items = {};
-  const flags = {};
+  const afters = {}; // step id -> refs of things waiting on it
   const cutUses = {};
   const item = id => items[id] ||
     (items[id] = { found: [], made: [], given: [], needed: [], reactions: [], parts: [] });
-  const flag = f => flags[f] || (flags[f] = { set: [], cleared: [], checked: [] });
 
   forEachActionHolder((h, ref) => {
-    toList(h.when).forEach(c => { if (c && c.flag) flag(c.flag).checked.push(ref); });
-    toList(h.setFlag).forEach(f => flag(f).set.push(ref));
-    toList(h.clearFlag).forEach(f => flag(f).cleared.push(ref));
     if (h.needs) item(h.needs).needed.push(ref);
-    if (h.items) Object.keys(h.items).forEach(id => item(id).reactions.push(ref));
-    if (h.then && h.then.indexOf('pick:') === 0) item(h.then.slice(5)).given.push(ref);
-    if (h.then && h.then.indexOf('cut:') === 0) {
-      const c = h.then.slice(4);
-      (cutUses[c] || (cutUses[c] = [])).push(ref);
-    }
+    if (h.reactions) Object.keys(h.reactions).forEach(id => item(id).reactions.push(ref));
+    if (h.gives) item(h.gives).given.push(ref);
+    if (h.plays) (cutUses[h.plays] || (cutUses[h.plays] = [])).push(ref);
   });
   Object.keys(SCENES).forEach(rn => {
-    (SCENES[rn].objects || []).forEach((o, i) => {
-      if (o.item) item(o.item).found.push({ kind: 'hotspot', room: rn, idx: i });
+    (SCENES[rn].hotspots || []).forEach((o, i) => {
+      const ref = { kind: 'hotspot', room: rn, idx: i };
+      if (isPickup(o)) {
+        // pickups are "found", not "given"
+        const g = item(o.gives);
+        g.given = g.given.filter(r => !(r.kind === 'hotspot' &&
+          r.room === rn && r.idx === i));
+        g.found.push(ref);
+      }
+      toList(o.after).concat(toList(o.afterNot)).forEach(id => {
+        (afters[id] || (afters[id] = [])).push(ref);
+      });
     });
   });
   COMBINE.forEach((c, i) => {
@@ -408,17 +386,39 @@ function buildRefs() {
     if (c.makes) item(c.makes).made.push(ref);
   });
   if (START_CUT) (cutUses[START_CUT] || (cutUses[START_CUT] = [])).push({ kind: 'start' });
-  return { items, flags, cutUses };
+  return { items, afters, cutUses };
 }
 
 function collectItems() { return Object.keys(buildRefs().items).sort(); }
-function collectFlags() { return Object.keys(buildRefs().flags).sort(); }
+
+// every id the engine can mark done: hotspot ids, cutscene names,
+// make:<result> for combines
+function collectStepIds() {
+  const out = {};
+  Object.keys(SCENES).forEach(rn =>
+    (SCENES[rn].hotspots || []).forEach(o => { if (o.id) out[o.id] = 1; }));
+  Object.keys(CUTSCENES).forEach(cn => { out[cn] = 1; });
+  COMBINE.forEach(c => { if (c.makes) out['make:' + c.makes] = 1; });
+  return out;
+}
+
+// a human label for a step id (used by after-pickers and chips)
+function stepIdLabel(id) {
+  if (CUTSCENES[id]) return 'watch ' + id;
+  if (id.indexOf('make:') === 0) return id.replace('make:', 'make ');
+  let found = null;
+  Object.keys(SCENES).forEach(rn =>
+    (SCENES[rn].hotspots || []).forEach((o, i) => {
+      if (o.id === id) found = rn + ': ' + objectLabel(o, i);
+    }));
+  return found || id + ' (missing!)';
+}
 
 /* ---------- jump-links ---------- */
 
 function whereLabel(ref) {
   if (ref.kind === 'hotspot') {
-    const o = (SCENES[ref.room] || {}).objects || [];
+    const o = (SCENES[ref.room] || {}).hotspots || [];
     return ref.room + ' · ' + (o[ref.idx] ? objectLabel(o[ref.idx], ref.idx) : '?');
   }
   if (ref.kind === 'room') return 'room ' + ref.room;
@@ -458,12 +458,14 @@ function hotspotFiles(o, rn) {
   const sounds = {};
   (JSON.stringify(o).match(/[\w\-]+\.png/g) || []).forEach(f => { art[f] = 1; });
   (JSON.stringify(o).match(/[\w\-]+\.wav/g) || []).forEach(f => { sounds[f] = 1; });
-  if (o.item) {
-    art[conv.itemCel(rn, o.item)] = 1;
-    art[conv.icon(o.item)] = 1;
-    art[o.anim || conv.pick(rn, o.item)] = 1;
+  if (isPickup(o)) {
+    art[conv.itemCel(rn, o.gives)] = 1;
+    art[o.anim || conv.pick(rn, o.gives)] = 1;
   }
-  if (o.gate) ['closed', 'use', 'open'].forEach(s => { art[conv.gate(o.gate, s)] = 1; });
+  if (o.gives) art[conv.icon(o.gives)] = 1;
+  if (o.gateArt) ['closed', 'use', 'open'].forEach(s => {
+    art[conv.gate(o.gateArt, s)] = 1;
+  });
   return { art: Object.keys(art), sounds: Object.keys(sounds) };
 }
 
@@ -480,7 +482,7 @@ function missingFiles() {
     ensureRoomDefaults(rn);
     const roomRef = { kind: 'room', room: rn };
     [s.bg, s.idle, s.failAnim].forEach(f => add(f, hasArt(f), roomRef));
-    (s.objects || []).forEach((o, i) => {
+    (s.hotspots || []).forEach((o, i) => {
       const ref = { kind: 'hotspot', room: rn, idx: i };
       const files = hotspotFiles(o, rn);
       files.art.forEach(f => add(f, hasArt(f), ref));
@@ -503,15 +505,11 @@ function missingFiles() {
 function computeIssues() {
   const out = [];
   const R = buildRefs();
-  Object.keys(R.flags).sort().forEach(f => {
-    const x = R.flags[f];
-    if (x.checked.length && !x.set.length) {
-      out.push({ level: 'error', text: 'flag "' + f + '" is required but nothing ever sets it',
-                 refs: x.checked });
-    }
-    if (x.set.length && !x.checked.length) {
-      out.push({ level: 'note', text: 'flag "' + f + '" is set but never checked',
-                 refs: x.set });
+  const steps = collectStepIds();
+  Object.keys(R.afters).sort().forEach(id => {
+    if (!steps[id]) {
+      out.push({ level: 'error', text: 'waits for unknown step "' + id + '"',
+                 refs: R.afters[id] });
     }
   });
   Object.keys(R.items).sort().forEach(id => {
@@ -528,12 +526,11 @@ function computeIssues() {
     }
   });
   forEachActionHolder((h, ref) => {
-    const g = goTarget(h.then);
-    if (g && !SCENES[g]) {
-      out.push({ level: 'error', text: 'leads to unknown room "' + g + '"', refs: [ref] });
+    if (h.goes && !SCENES[h.goes]) {
+      out.push({ level: 'error', text: 'leads to unknown room "' + h.goes + '"', refs: [ref] });
     }
-    if (h.then && h.then.indexOf('cut:') === 0 && !CUTSCENES[h.then.slice(4)]) {
-      out.push({ level: 'error', text: 'plays unknown cutscene "' + h.then.slice(4) + '"',
+    if (h.plays && !CUTSCENES[h.plays]) {
+      out.push({ level: 'error', text: 'plays unknown cutscene "' + h.plays + '"',
                  refs: [ref] });
     }
   });
@@ -676,8 +673,9 @@ function setOrDelete(o, k) {
   };
 }
 
-// "afterwards" choices, grouped; keeps entryAnim in sync when the
-// target is a room (walk-in clip by convention).
+// "afterwards" choices: one select that writes ONE of goes/plays/gives
+// (the common case; combos live in the raw JSON). Keeps entryAnim in
+// sync when the target is a room (walk-in clip by convention).
 function afterLabel(v) {
   if (v.indexOf('go:') === 0) return 'go to ' + v.slice(3);
   if (v.indexOf('cut:') === 0) return 'play cutscene ' + v.slice(4);
@@ -696,12 +694,22 @@ function afterGroups(includeItems) {
   return g.filter(x => x.options.length);
 }
 
-function setThen(holder, fromRoom) {
+function afterwardsValue(h) {
+  if (h.goes) return 'go:' + h.goes;
+  if (h.plays) return 'cut:' + h.plays;
+  if (h.gives) return 'pick:' + h.gives;
+  return '';
+}
+
+function setAfterwards(h, fromRoom) {
   return v => {
-    setOrDelete(holder, 'then')(v);
-    const t = goTarget(v);
-    if (t) holder.entryAnim = conv.arrive(t, fromRoom);
-    else delete holder.entryAnim;
+    delete h.goes; delete h.plays; delete h.gives;
+    delete h.entryAnim; delete h.entryDur;
+    if (v.indexOf('go:') === 0) {
+      h.goes = v.slice(3);
+      h.entryAnim = conv.arrive(h.goes, fromRoom);
+    } else if (v.indexOf('cut:') === 0) h.plays = v.slice(4);
+    else if (v.indexOf('pick:') === 0) h.gives = v.slice(5);
   };
 }
 
@@ -797,7 +805,7 @@ function drawStage() {
   ctx.clearRect(0, 0, 800, 600);
   if (!s) return;
   drawFrame0(s.bg);
-  (s.objects || []).forEach(o => drawFrame0(objectCel(o)));
+  (s.hotspots || []).forEach(o => drawFrame0(objectCel(o)));
   drawFrame0(s.idle);
   // the hotbar overlaps the stage bottom in-game (style.css: top 480px)
   const hb = loadImg('ui_hotbar.png');
@@ -874,7 +882,7 @@ function renderOverlay() {
   if (stageMode() !== 'room') return;
   const s = SCENES[room];
   if (!s) return;
-  const objs = s.objects || [];
+  const objs = s.hotspots || [];
   areaGroups(objs).forEach(idxs => {
     const primary = idxs.indexOf(sel) >= 0 ? sel : idxs[0];
     const o = objs[primary];
@@ -907,7 +915,7 @@ function selectHotspot(idx) {
 function startDrag(ev, index, mode) {
   ev.preventDefault();
   if (sel !== index) { selectHotspot(index); refresh(); }
-  const objs = SCENES[room].objects;
+  const objs = SCENES[room].hotspots;
   const idxs = groupIndices(index); // all states of the spot move as one
   const start = stagePos(ev);
   const a0 = bbox(objs[index].area);
@@ -947,10 +955,10 @@ overlay.onmousedown = ev => {
     if (!drew && (Math.abs(p[0] - start[0]) > 10 || Math.abs(p[1] - start[1]) > 10)) {
       drew = true;
       newHotspot(room, { area: [start[0], start[1], p[0], p[1]] });
-      selectHotspot(SCENES[room].objects.length - 1);
+      selectHotspot(SCENES[room].hotspots.length - 1);
     }
     if (drew) {
-      SCENES[room].objects[sel].area = [
+      SCENES[room].hotspots[sel].area = [
         Math.min(start[0], p[0]), Math.min(start[1], p[1]),
         Math.max(start[0], p[0]), Math.max(start[1], p[1])];
       renderOverlay();
@@ -968,66 +976,46 @@ overlay.onmousedown = ev => {
 
 /* ---------- shared inspector sections ---------- */
 
-function whenSec(panel, o) {
-  const d = sec(panel, 'story', 'Appears when');
-  const conds = toList(o.when).filter(c => c && c.flag);
+// "Appears": the hotspot's after/afterNot lists — which completed
+// steps make it appear (or retire it). One editor for both lists.
+function afterListLine(d, o, key, verb, emptyText) {
+  const ids = toList(o[key]).slice();
   const store = () => {
-    if (!conds.length) delete o.when;
-    else o.when = conds.length === 1 ? conds[0] : conds;
+    if (!ids.length) delete o[key];
+    else o[key] = ids;
     markDirty(); refresh();
   };
-  if (!conds.length) {
-    const b = line(d);
-    word(b, 'always');
-    el('span', { class: 'muted', text: '(no flag conditions)' }, b);
-  }
-  conds.forEach((c, i) => {
-    const b = line(d);
-    if (i > 0) word(b, 'and');
-    b.appendChild(namePicker(collectFlags(), c.flag, v => { c.flag = v; store(); },
-      { blank: false, placeholder: 'new flag name' }));
-    b.appendChild(selectInput(['is set', 'not yet set'],
-      c.value === false ? 'not yet set' : 'is set',
-      v => {
-        if (v === 'not yet set') c.value = false; else delete c.value;
-        store();
-      }, { blank: false }));
-    el('button', { class: 'mini danger', text: 'x',
-      onclick: () => { conds.splice(i, 1); store(); } }, b);
-  });
   const b = line(d);
-  addButton(b, '+ condition', () =>
-    namePicker(collectFlags(), '', v => { conds.push({ flag: v }); store(); },
-      { blank: 'choose flag…', placeholder: 'new flag name' }));
+  word(b, verb);
+  if (!ids.length) el('span', { class: 'muted', text: emptyText }, b);
+  const known = collectStepIds();
+  ids.forEach((id, i) => {
+    if (i > 0) word(b, 'and');
+    el('span', { class: 'ref' + (known[id] ? '' : ' warn'),
+      text: id === o.id ? 'this step itself' : stepIdLabel(id),
+      title: id }, b);
+    el('button', { class: 'mini danger', text: 'x',
+      onclick: () => { ids.splice(i, 1); store(); } }, b);
+  });
+  addButton(b, '+ step', () => {
+    const opts = Object.keys(known).filter(x => ids.indexOf(x) === -1).sort();
+    return selectInput(opts, '', v => { if (v) { ids.push(v); store(); } },
+      { blank: 'choose step…', labelFn: stepIdLabel });
+  });
 }
 
-function flagsLine(parent, holder, verb) {
-  const flags = toList(holder.setFlag).slice();
-  const store = () => {
-    if (!flags.length) delete holder.setFlag;
-    else holder.setFlag = flags.length === 1 ? flags[0] : flags;
-    markDirty(); refresh();
-  };
-  const b = line(parent);
-  word(b, verb);
-  if (!flags.length) el('span', { class: 'muted', text: 'no flags' }, b);
-  flags.forEach((f, i) => {
-    if (i > 0) word(b, 'and');
-    b.appendChild(namePicker(collectFlags(), f, v => { flags[i] = v; store(); },
-      { blank: false, placeholder: 'new flag name' }));
-    el('button', { class: 'mini danger', text: 'x',
-      onclick: () => { flags.splice(i, 1); store(); } }, b);
-  });
-  addButton(b, '+', () =>
-    namePicker(collectFlags().filter(f => flags.indexOf(f) === -1), '',
-      v => { flags.push(v); store(); },
-      { blank: 'choose flag…', placeholder: 'new flag name' }));
+function afterSec(panel, o) {
+  const d = sec(panel, 'story', 'Appears');
+  afterListLine(d, o, 'after', 'after', 'from the start');
+  afterListLine(d, o, 'afterNot', 'gone once', '(never retires)');
+  el('div', { class: 'muted', text:
+    'other steps can wait for this one — its step id is "' + o.id + '"' }, d);
 }
 
 /* "using [item] here…" — the per-item reactions on a hotspot */
-function reactionsSec(panel, holder) {
+function reactionsSec(panel, o) {
   const d = sec(panel, 'story', 'Using an item here');
-  const map = holder.items || {};
+  const map = o.reactions || {};
   Object.keys(map).forEach(id => {
     if (typeof map[id] === 'string') map[id] = { hint: map[id] }; // normalize
     const entry = map[id];
@@ -1059,7 +1047,7 @@ function reactionsSec(panel, holder) {
     }
     el('button', { class: 'mini danger', text: 'x', onclick: () => {
       delete map[id];
-      if (!Object.keys(map).length) delete holder.items;
+      if (!Object.keys(map).length) delete o.reactions;
       markDirty(); refresh();
     } }, b);
     if (!refused) {
@@ -1070,28 +1058,27 @@ function reactionsSec(panel, holder) {
       b2.appendChild(selectInput(soundGroups(room), entry.sound, setOrDelete(entry, 'sound')));
       const b3 = line(d);
       word(b3, '…afterwards');
-      b3.appendChild(selectInput(afterGroups(true), entry.then, setThen(entry, room),
-        { blank: 'nothing', labelFn: afterLabel }));
+      b3.appendChild(selectInput(afterGroups(true), afterwardsValue(entry),
+        setAfterwards(entry, room), { blank: 'nothing', labelFn: afterLabel }));
       b3.appendChild(selectInput(['keeps the item', 'uses it up'],
         entry.consume ? 'uses it up' : 'keeps the item',
         v => {
           if (v === 'uses it up') entry.consume = true; else delete entry.consume;
         }, { blank: false }));
-      flagsLine(d, entry, '…and sets');
     }
   });
   const b = line(d);
   addButton(b, '+ item reaction', () =>
     namePicker(collectItems().filter(x => !map[x]), '', v => {
-      holder.items = holder.items || {};
-      holder.items[v] = { hint: assets.sounds[0] || 'fail.wav' };
+      o.reactions = o.reactions || {};
+      o.reactions[v] = { hint: assets.sounds[0] || 'fail.wav' };
       markDirty(); refresh();
     }, { blank: 'choose item…', placeholder: 'new item id' }));
 }
 
 /* ---------- hotspot inspector ----------
  * One flow for every hotspot, top to bottom in play order:
- *   appears when → lock (optional) → on tap → afterwards → story.
+ *   appears (after steps) → lock (optional) → on tap → afterwards.
  * A pickup swaps the middle for its item fields. No type juggling. */
 
 function lockSec(panel, o) {
@@ -1100,44 +1087,54 @@ function lockSec(panel, o) {
     const b = line(d);
     el('span', { class: 'muted', text: 'not locked — anyone can tap it' }, b);
     addButton(b, '+ add lock', () =>
-      namePicker(collectItems(), '', v => { if (v) lockHotspot(o, v, room); },
+      namePicker(collectItems(), '', v => { if (v) addLock(o, v); },
         { blank: 'opens with…', placeholder: 'new item id' }));
-    return null;
+    return false;
   }
-  if (!o.gate && !o.locked) lockHotspot(o, null, room); // legacy plain-needs spot
-  const locked = o.locked = o.locked || {};
   let b = line(d);
   word(b, 'opens with');
-  b.appendChild(namePicker(collectItems(), locked.needs, setOrDelete(locked, 'needs'),
+  b.appendChild(namePicker(collectItems(), o.needs, setOrDelete(o, 'needs'),
     { blank: 'nothing yet', placeholder: 'new item id' }));
   word(b, 'and sound');
-  b.appendChild(selectInput(soundGroups(room), locked.sound, setOrDelete(locked, 'sound')));
+  b.appendChild(selectInput(soundGroups(room), o.useSound, setOrDelete(o, 'useSound')));
+  b = line(d);
+  word(b, 'use clip');
+  b.appendChild(selectInput(useClips(room), o.useAnim, setOrDelete(o, 'useAnim')));
   b = line(d);
   word(b, 'wrong / no item says');
-  b.appendChild(selectInput(soundGroups(room), locked.hint, v => {
-    setOrDelete(locked, 'hint')(v);
-    autoHold(locked, SCENES[room].failAnim, 'hintDur', v); // hold = line length
+  b.appendChild(selectInput(soundGroups(room), o.hint, v => {
+    setOrDelete(o, 'hint')(v);
+    autoHold(o, SCENES[room].failAnim, 'hintDur', v); // hold = line length
   }));
   b = line(d);
   word(b, 'right after unlocking');
-  b.appendChild(selectInput(afterGroups(false), locked.then, setThen(locked, room),
-    { blank: 'nothing special', labelFn: afterLabel }));
-  flagsLine(d, locked, 'first unlock sets');
+  const un = o.onUnlock || {};
+  b.appendChild(selectInput(afterGroups(true), afterwardsValue(un), v => {
+    o.onUnlock = un;
+    setAfterwards(un, room)(v);
+    if (!Object.keys(un).length) delete o.onUnlock;
+  }, { blank: 'nothing special', labelFn: afterLabel }));
+  if (un.plays && CUTSCENES[un.plays]) {
+    refChip(b, { kind: 'cutscene', name: un.plays }); // jump to edit it
+  }
   b = line(d);
   word(b, 'prop art id');
-  b.appendChild(textInput(o.gate, v => { if (NAME_RE.test(v)) o.gate = v; }));
+  b.appendChild(textInput(o.gateArt, v => {
+    if (!v) delete o.gateArt;
+    else if (NAME_RE.test(v)) o.gateArt = v;
+  }, 'gate_<id>_closed/_use/_open'));
   el('button', { class: 'mini danger', text: 'Remove lock', onclick: () => {
     if (!confirm('Remove the lock? The refuse line and unlock behaviour are dropped; ' +
                  'what happens on tap is kept.')) return;
-    unlockHotspot(o);
+    removeLock(o);
     markDirty(); refresh();
   } }, b);
-  return locked;
+  return true;
 }
 
 // State chips: switch between the hotspots sharing this area, and
 // "+ state" to clone the current one (the one-time-use pattern: state 1
-// works and sets a flag, state 2 appears when the flag is set).
+// works and retires itself, state 2 appears after it).
 function statesRow(panel, o) {
   const idxs = groupIndices(sel);
   const wrap = el('div', { class: 'typechips' }, panel);
@@ -1145,18 +1142,18 @@ function statesRow(panel, o) {
     word(wrap, 'states:');
     idxs.forEach((i, n) => {
       el('div', { class: 'chip' + (i === sel ? ' active' : ''),
-        text: (n + 1) + ' — ' + whenSummary(SCENES[room].objects[i]),
+        text: (n + 1) + ' — ' + afterSummary(SCENES[room].hotspots[i]),
         onclick: () => { if (i !== sel) { selectHotspot(i); refresh(); } } }, wrap);
     });
   }
   el('div', { class: 'chip', text: '+ state',
     title: 'copy this hotspot as another state of the same spot — same ' +
-           'area, shown under different flag conditions (e.g. the ' +
+           'area, shown under different after-conditions (e.g. the ' +
            'fountain after the coin has been fished)',
     onclick: () => {
       const copy = JSON.parse(JSON.stringify(o));
       delete copy.id;
-      SCENES[room].objects.splice(sel + 1, 0, copy);
+      SCENES[room].hotspots.splice(sel + 1, 0, copy);
       ensureIds();
       selectHotspot(sel + 1);
       markDirty(); refresh();
@@ -1174,21 +1171,21 @@ function renderHotspot(panel, o) {
         if (t[0] === 'pickup') {
           if (!confirm('Turn this spot into an item pickup?' +
               (isLocked(o) ? ' Its lock is removed.' : ''))) return;
-          unlockHotspot(o);
-          delete o.then; delete o.entryAnim; delete o.entryDur;
-          o.item = collectItems()[0] || 'newitem';
-          o.anim = conv.pick(room, o.item);
+          removeLock(o);
+          delete o.plays; delete o.goes; delete o.entryAnim; delete o.entryDur;
+          o.gives = o.gives || collectItems()[0] || 'newitem';
+          o.anim = conv.pick(room, o.gives);
         } else {
           if (!confirm('Turn this pickup into a plain spot?')) return;
-          if (o.anim === conv.pick(room, o.item)) delete o.anim;
-          delete o.item;
+          if (o.anim === conv.pick(room, o.gives)) delete o.anim;
+          delete o.gives;
         }
         markDirty(); refresh();
       } }, chips);
   });
   const stateCount = statesRow(panel, o);
 
-  whenSec(panel, o);
+  afterSec(panel, o);
 
   let b, d;
   const need = [];
@@ -1197,13 +1194,12 @@ function renderHotspot(panel, o) {
     d = sec(panel, 'story', 'Pickup');
     b = line(d);
     word(b, 'gives');
-    b.appendChild(namePicker(collectItems(), o.item, v => {
+    b.appendChild(namePicker(collectItems(), o.gives, v => {
       if (!v) return;
-      o.item = v;
+      o.gives = v;
       o.anim = conv.pick(room, v); // grab clip by convention
     }, { blank: false, placeholder: 'new item id' }));
-    flagsLine(d, o, 'taken, sets');
-    if (!o.anim) o.anim = conv.pick(room, o.item);
+    if (!o.anim) o.anim = conv.pick(room, o.gives);
     d = sec(panel, 'media', 'Looks');
     b = line(d);
     word(b, 'grab clip');
@@ -1211,45 +1207,39 @@ function renderHotspot(panel, o) {
     reactionsSec(panel, o);
   } else {
     const locked = lockSec(panel, o);
-    const tap = tapHolder(o);
 
     d = sec(panel, 'media', locked ? 'On tap (once unlocked)' : 'On tap');
     b = line(d);
     word(b, 'character plays');
-    b.appendChild(selectInput(tapClips(room), tap.anim, v => {
-      setOrDelete(tap, 'anim')(v);
-      autoHold(tap, v, 'dur', tap.sound);
+    b.appendChild(selectInput(tapClips(room), o.anim, v => {
+      setOrDelete(o, 'anim')(v);
+      autoHold(o, v, 'dur', o.sound);
     }));
     b = line(d);
     word(b, 'room shows');
-    b.appendChild(selectInput(objClips(room), tap.objAnim, setOrDelete(tap, 'objAnim')));
+    b.appendChild(selectInput(objClips(room), o.objAnim, setOrDelete(o, 'objAnim')));
     b = line(d);
     word(b, 'saying / sound');
-    b.appendChild(selectInput(soundGroups(room), tap.sound, v => {
-      setOrDelete(tap, 'sound')(v);
-      autoHold(tap, tap.anim, 'dur', v);
+    b.appendChild(selectInput(soundGroups(room), o.sound, v => {
+      setOrDelete(o, 'sound')(v);
+      autoHold(o, o.anim, 'dur', v);
     }));
 
     d = sec(panel, 'nav', 'Afterwards');
     b = line(d);
     word(b, 'then');
-    b.appendChild(selectInput(afterGroups(true), tap.then, setThen(tap, room),
-      { blank: 'back to idle', labelFn: afterLabel }));
-    if (tap.then && tap.then.indexOf('cut:') === 0 && CUTSCENES[tap.then.slice(4)]) {
-      refChip(b, { kind: 'cutscene', name: tap.then.slice(4) }); // jump to edit it
+    b.appendChild(selectInput(afterGroups(true), afterwardsValue(o),
+      setAfterwards(o, room), { blank: 'back to idle', labelFn: afterLabel }));
+    if (o.plays && CUTSCENES[o.plays]) {
+      refChip(b, { kind: 'cutscene', name: o.plays }); // jump to edit it
     }
-    const t = goTarget(tap.then);
-    if (t) need.push(conv.arrive(t, room)); // arrival clip by convention
+    if (o.goes) need.push(conv.arrive(o.goes, room)); // arrival clip by convention
     b = line(d);
     word(b, 'hover cursor');
-    b.appendChild(selectInput(['left', 'right', 'point'], tap.cursor, v => {
-      setOrDelete(tap, 'cursor')(v);
-      if (locked) setOrDelete(locked, 'cursor')(v); // same cursor both states
-    }));
+    b.appendChild(selectInput(['left', 'right', 'point'], o.cursor,
+      setOrDelete(o, 'cursor')));
 
-    d = sec(panel, 'story', 'Story');
-    flagsLine(d, tap, 'tapped, sets');
-    reactionsSec(panel, locked || o);
+    reactionsSec(panel, o);
   }
 
   const files = hotspotFiles(o, room);
@@ -1260,7 +1250,7 @@ function renderHotspot(panel, o) {
   el('button', { class: 'mini danger big',
     text: stateCount > 1 ? 'Delete this state' : 'Delete hotspot',
     onclick: () => {
-      SCENES[room].objects.splice(sel, 1);
+      SCENES[room].hotspots.splice(sel, 1);
       selectHotspot(-1); markDirty(); refresh();
     } }, btns);
 }
@@ -1271,10 +1261,10 @@ function roomConnections(rn) {
   const to = [];
   const from = [];
   Object.keys(SCENES).forEach(other => {
-    (SCENES[other].objects || []).forEach((o, i) => {
+    (SCENES[other].hotspots || []).forEach((o, i) => {
       const targets = [];
-      [o, o.locked, o.open].forEach(h => {
-        if (h && goTarget(h.then)) targets.push(goTarget(h.then));
+      [o, o.onUnlock].forEach(h => {
+        if (h && h.goes) targets.push(h.goes);
       });
       targets.forEach(t => {
         if (other === rn && t !== rn) to.push({ kind: 'hotspot', room: rn, idx: i });
@@ -1304,7 +1294,7 @@ function renderRoomCard(panel) {
   // are not story nodes, so this list is how you reach them
   el('h2', { text: 'Hotspots', style: 'margin-top:12px' }, panel);
   const ul = el('ul', { id: 'objlist' }, panel);
-  const objs = s.objects || [];
+  const objs = s.hotspots || [];
   areaGroups(objs).forEach(idxs => {
     const i = idxs[0];
     const o = objs[i];
@@ -1313,10 +1303,10 @@ function renderRoomCard(panel) {
     el('span', { class: 'lbl', text: objectLabel(o, i) }, li);
     if (idxs.length > 1) {
       el('span', { class: 'flagged', text: idxs.length + ' states',
-        title: 'same area, different flag conditions' }, li);
-    } else if (o.when) {
-      el('span', { class: 'flagged', text: '⚑ conditional',
-        title: 'only appears when its flag conditions hold' }, li);
+        title: 'same area, different after-conditions' }, li);
+    } else if (o.after || o.afterNot) {
+      el('span', { class: 'flagged', text: '⚑ ' + afterSummary(o),
+        title: 'appears only under these step conditions' }, li);
     }
     let missing = 0;
     idxs.forEach(n => {
@@ -1328,7 +1318,7 @@ function renderRoomCard(panel) {
   });
   el('button', { class: 'mini big', text: '+ Add hotspot', onclick: () => {
     newHotspot(room, { area: [340, 240, 460, 360] });
-    selectHotspot(SCENES[room].objects.length - 1);
+    selectHotspot(SCENES[room].hotspots.length - 1);
     markDirty(); refresh();
   } }, panel);
 
@@ -1378,21 +1368,26 @@ const ROOM_H = 26; // room title bar height (steps use H)
 
 function nodeH(n) { return n.kind === 'room' ? ROOM_H : H; }
 
-// remove one flag's conditions from an object's `when`
-function removeWhenFrom(obj, f) {
-  const cs = toList(obj.when).filter(c => !(c && c.flag === f));
-  if (!cs.length) delete obj.when;
-  else obj.when = cs.length === 1 ? cs[0] : cs;
+// remove one step id from an object's after/afterNot lists
+function removeAfterFrom(obj, id) {
+  ['after', 'afterNot'].forEach(k => {
+    const v = toList(obj[k]).filter(x => x !== id);
+    if (!v.length) delete obj[k];
+    else obj[k] = v;
+  });
 }
 
-// remove a holder's follow-up action (then + arrival clip)
-function delThen(h) {
-  return () => { delete h.then; delete h.entryAnim; delete h.entryDur; };
+// wire-deletion closures for the named consequence keys
+function delKey(h, k) {
+  return () => {
+    delete h[k];
+    if (k === 'goes') { delete h.entryAnim; delete h.entryDur; }
+  };
 }
 
 // the map id of the step covering a hotspot (first state's id)
 function stepNodeId(rn, idx) {
-  const objs = SCENES[rn].objects || [];
+  const objs = SCENES[rn].hotspots || [];
   const key = areaKey(objs[idx]);
   for (let i = 0; i < objs.length; i++) {
     if (areaKey(objs[i]) === key) return 'step:' + objs[i].id;
@@ -1468,9 +1463,9 @@ function buildStoryGraph() {
   const freeAdj = {};
   Object.keys(SCENES).forEach(rn => {
     freeAdj[rn] = [];
-    (SCENES[rn].objects || []).forEach((o, i) => {
-      const t = goTarget(o.then);
-      if (t && SCENES[t] && !isLocked(o) && !o.item) {
+    (SCENES[rn].hotspots || []).forEach((o, i) => {
+      const t = o.goes;
+      if (t && SCENES[t] && !o.needs) {
         freeAdj[rn].push(t);
         const k = rn + '>' + t; // directed: one arrow per direction
         if (!exitSeen[k]) {
@@ -1499,9 +1494,9 @@ function buildStoryGraph() {
   while (grew) {
     grew = false;
     Object.keys(roomZone).forEach(rn => {
-      (SCENES[rn].objects || []).forEach(o => {
-        if (!isLocked(o)) return;
-        const t = goTarget((o.open || {}).then);
+      (SCENES[rn].hotspots || []).forEach(o => {
+        if (!o.needs) return;
+        const t = o.goes || (o.onUnlock && o.onUnlock.goes);
         if (t && SCENES[t] && roomZone[t] === undefined) {
           claim(t, roomZone[rn] + 1);
           grew = true;
@@ -1519,70 +1514,71 @@ function buildStoryGraph() {
   });
 
   /* what every step yields and wants — resolved into wires at the end */
-  const producers = {}; // item -> [stepId]
+  const producers = {}; // item -> [nodeId]
   const consumers = {}; // item -> [{step, del}]
-  const setters = {};   // flag -> [stepId]
-  const checkers = {};  // flag -> [{step, obj (owner of `when`)}]
+  const doneNode = {};  // engine done-id (hotspot id / cutscene / make:x) -> nodeId
+  const waits = [];     // after/afterNot references, resolved into wires
   const produce = (it, s) => (producers[it] = producers[it] || []).push(s);
   const consume = (it, s, del) =>
     (consumers[it] = consumers[it] || []).push({ step: s, del });
-  const setF = (f, s) => (setters[f] = setters[f] || []).push(s);
-  const checkF = (f, s, obj) =>
-    (checkers[f] = checkers[f] || []).push({ step: s, obj });
 
   /* steps from hotspots — states sharing an area are one step */
   Object.keys(SCENES).forEach(rn => {
-    const objs = SCENES[rn].objects || [];
+    const objs = SCENES[rn].hotspots || [];
     areaGroups(objs).forEach(idxs => {
-      const isStep = idxs.some(i => {
+      const stepworthy = idxs.some(i => {
         const o = objs[i];
-        if (o.item) return true;
-        if (o.gate || o.locked || o.needs) return true;
-        if ([o, o.open].some(h => h &&
-            ((h.then || '').indexOf('cut:') === 0 || h.setFlag))) return true;
-        return [o.items, o.locked && o.locked.items].some(m =>
-          m && Object.keys(m).some(x => worksEntry(m[x])));
+        if (isPickup(o) || o.needs || o.plays) return true;
+        if (o.onUnlock && Object.keys(o.onUnlock).length) return true;
+        return o.reactions &&
+          Object.keys(o.reactions).some(x => worksEntry(o.reactions[x]));
       });
-      if (!isStep) return;
-      const id = 'step:' + objs[idxs[0]].id;
+      const id = stepworthy ? 'step:' + objs[idxs[0]].id : null;
+      const group = idxs.map(x => objs[x].id);
+      idxs.forEach(i => {
+        const o = objs[i];
+        if (id) doneNode[o.id] = id;
+        // even flavour spots can WAIT on steps — record refs either way
+        toList(o.after).forEach(aid =>
+          waits.push({ obj: o, aid, node: id, group }));
+        toList(o.afterNot).forEach(aid =>
+          waits.push({ obj: o, aid, node: id, group, not: true }));
+      });
+      if (!stepworthy) return;
       const gives = {};
       const subs = [];
 
       idxs.forEach(i => {
         const o = objs[i];
-        toList(o.when).forEach(c => { if (c && c.flag) checkF(c.flag, id, o); });
-
-        const outputs = h => {
+        const outputs = (h, isBase) => {
           if (!h) return;
-          const cn = h.then && h.then.indexOf('cut:') === 0 ? h.then.slice(4) : null;
-          // flags set alongside a cutscene are EXPERIENCED after it
-          // (the player can't act while it plays), so their
-          // consequences hang off the cutscene's node
-          toList(h.setFlag).forEach(f => setF(f, cn ? 'step:cut:' + cn : id));
-          if (h.then && h.then.indexOf('pick:') === 0) {
-            const it = h.then.slice(5);
-            produce(it, id);
-            gives[it] = 1;
+          if (h.gives && !(isBase && isPickup(o))) {
+            produce(h.gives, id);
+            gives[h.gives] = 1;
           }
-          if (cn) edge(id, 'step:cut:' + cn, false, 'plays', delThen(h));
-          if (isLocked(o) && goTarget(h.then)) {
-            edge(id, 'room:' + goTarget(h.then), false, 'opens', delThen(h));
+          if (h.plays) {
+            edge(id, 'step:cut:' + h.plays, false, 'plays', delKey(h, 'plays'));
+          }
+          if (h.goes && o.needs) {
+            edge(id, 'room:' + h.goes, false, 'opens', delKey(h, 'goes'));
           }
         };
         const uses = h => {
-          if (h && h.needs) consume(h.needs, id, () => { delete h.needs; });
-          if (h && h.items) Object.keys(h.items).forEach(x => {
-            if (!worksEntry(h.items[x])) return; // refusals aren't progression
+          if (!h || !h.reactions) return;
+          Object.keys(h.reactions).forEach(x => {
+            if (!worksEntry(h.reactions[x])) return; // refusals aren't progression
             consume(x, id, () => {
-              delete h.items[x];
-              if (!Object.keys(h.items).length) delete h.items;
+              delete h.reactions[x];
+              if (!Object.keys(h.reactions).length) delete h.reactions;
             });
-            outputs(h.items[x]);
+            outputs(h.reactions[x]);
           });
         };
-        if (o.item) produce(o.item, id);
-        uses(o); uses(o.locked);
-        outputs(o); outputs(o.locked); outputs(o.open);
+        if (isPickup(o)) produce(o.gives, id);
+        if (o.needs) consume(o.needs, id, () => { removeLock(o); });
+        uses(o);
+        outputs(o, true);
+        outputs(o.onUnlock);
       });
 
       // the label is the player's verb, from the first state that names one
@@ -1590,16 +1586,16 @@ function buildStoryGraph() {
       idxs.forEach(i => {
         if (label) return;
         const o = objs[i];
-        if (o.item) { label = 'take ' + o.item; return; }
-        if (o.gate || o.locked) {
-          const openT = goTarget((o.open || {}).then) ||
-                        goTarget(((o.locked || {}).then));
-          const needs = (o.locked || {}).needs;
+        if (isPickup(o)) { label = 'take ' + o.gives; return; }
+        if (o.needs) {
+          const openT = o.goes || (o.onUnlock && o.onUnlock.goes);
           label = openT ? 'unlock door to ' + openT
-                        : 'use ' + (needs || '?') + ' on ' + gateShort(o.gate, rn);
+                        : 'use ' + o.needs + ' on ' +
+                          (o.gateArt ? gateShort(o.gateArt, rn)
+                                     : (thingName(o) || 'it'));
           return;
         }
-        const m = o.items || {};
+        const m = o.reactions || {};
         const wk = Object.keys(m).filter(x => worksEntry(m[x]))[0];
         const tn = thingName(o);
         if (wk) label = 'use ' + wk + ' on ' + (tn || 'it');
@@ -1623,44 +1619,47 @@ function buildStoryGraph() {
     node(id, 'step', 'make ' + (c.makes || '?'), 'combine',
          { kind: 'recipe', idx: i });
     (c.parts || []).forEach(p => { if (p) consume(p, id, delRecipe); });
-    if (c.makes) produce(c.makes, id);
+    if (c.makes) {
+      produce(c.makes, id);
+      doneNode['make:' + c.makes] = id;
+    }
   });
 
   /* every cutscene is a step of its own — "watch …" — living in the
-   * room whose step plays it. What it sets/reveals flows FROM it. */
+   * room whose step plays it. What it causes flows FROM it. */
   Object.keys(CUTSCENES).forEach(cn => {
     const trig = (R.cutUses[cn] || [])[0];
     const cs = CUTSCENES[cn];
     const id = 'step:cut:' + cn;
+    doneNode[cn] = id;
     node(id, 'step', 'watch ' + cn,
          trig ? (trig.kind === 'start' ? 'plays at boot' : '')
               : 'nothing triggers it!',
          { kind: 'cutscene', name: cn },
          trig && trig.kind === 'hotspot' ? trig.room : null);
-    toList(cs.setFlag).forEach(f => setF(f, id));
-    const t = goTarget(cs.then);
-    if (t) edge(id, 'room:' + t, false, 'then', delThen(cs));
+    if (cs.goes) edge(id, 'room:' + cs.goes, false, 'then', delKey(cs, 'goes'));
     else if (trig && trig.kind === 'start' && SCENES[START_ROOM]) {
       edge(id, 'room:' + START_ROOM, false, 'then');
     }
   });
 
   /* the wires: item wires from every step that yields an item to every
-   * step that wants it; ⚑flag wires for pure "this first" ordering
-   * (a flag set and checked by the same step is its internal state
-   * switch — the player never experiences it, so no wire) */
+   * step that wants it; dashed wires for after/afterNot ordering (an
+   * afterNot on the step's own group is its internal state switch —
+   * the player never experiences it, so no wire) */
   Object.keys(consumers).forEach(it => {
     consumers[it].forEach(c => {
       (producers[it] || []).forEach(p => edge(p, c.step, false, it, c.del));
     });
   });
-  Object.keys(checkers).forEach(f => {
-    checkers[f].forEach(c => {
-      (setters[f] || []).forEach(s => {
-        if (s === c.step) return;
-        edge(s, c.step, false, '⚑ ' + f, () => removeWhenFrom(c.obj, f));
-      });
-    });
+  waits.forEach(w => {
+    if (!w.node) return;                       // flavour spot — not on the map
+    if (w.group.indexOf(w.aid) !== -1) return; // own state switch
+    const src = doneNode[w.aid];
+    if (!src || src === w.node) return;
+    edge(src, w.node, false, w.not ? 'until' : '',
+         () => removeAfterFrom(w.obj, w.aid));
+    seen[src + '>' + w.node].dashed = true;
   });
 
   return { nodes, edges, roomZone, roomOrder, exits };
@@ -1900,29 +1899,35 @@ function popupPrompt(sx, sy, title, placeholder, commit, initial) {
 /* ---------- wire meanings ----------
  * A wire always means "needs this first". Dropping a dragged wire on a
  * node asks HOW the dependency is carried — with an item the source
- * step yields, or with a flag for pure ordering (the editor writes the
- * setFlag/when plumbing itself). Every apply reuses the same mutation
- * helpers as the inspector, so the data shapes stay exactly what the
- * engine expects. */
+ * step yields, or as a plain after-step ordering (the editor writes
+ * `after: [step id]` directly — deps are on steps, no flags). Every
+ * apply reuses the same mutation helpers as the inspector, so the data
+ * shapes stay exactly what the engine expects. */
 
-function addFlagTo(holder, f) {
-  const fs = toList(holder.setFlag);
-  if (fs.indexOf(f) === -1) fs.push(f);
-  holder.setFlag = fs.length === 1 ? fs[0] : fs;
-}
-
-function addWhenTo(obj, f, notYet) {
-  const conds = toList(obj.when).filter(c => c && c.flag && c.flag !== f);
-  conds.push(notYet ? { flag: f, value: false } : { flag: f });
-  obj.when = conds.length === 1 ? conds[0] : conds;
+function addAfterTo(obj, id) {
+  const v = toList(obj.after);
+  if (v.indexOf(id) === -1) v.push(id);
+  obj.after = v;
 }
 
 // resolve a step node back to its live hotspot (primary state)
 function hotspotOfNode(n) {
   const ref = n && n.ref;
   if (!ref || ref.kind !== 'hotspot') return null;
-  const o = ((SCENES[ref.room] || {}).objects || [])[ref.idx];
+  const o = ((SCENES[ref.room] || {}).hotspots || [])[ref.idx];
   return o ? { o, rn: ref.room } : null;
+}
+
+// the id the engine marks done when this node's step completes —
+// what another step's `after` list should reference
+function doneIdOfNode(n) {
+  if (n.ref && n.ref.kind === 'cutscene') return n.ref.name;
+  if (n.ref && n.ref.kind === 'recipe') {
+    const c = COMBINE[n.ref.idx];
+    return c && c.makes ? 'make:' + c.makes : null;
+  }
+  const hs = hotspotOfNode(n);
+  return hs ? hs.o.id : null;
 }
 
 // every item a step yields, across all its states and holders
@@ -1934,73 +1939,28 @@ function stepYields(n) {
   const hs = hotspotOfNode(n);
   if (!hs) return [];
   const out = {};
-  const objs = SCENES[hs.rn].objects || [];
+  const objs = SCENES[hs.rn].hotspots || [];
   const key = areaKey(hs.o);
   const scan = h => {
     if (!h) return;
-    if (h.then && h.then.indexOf('pick:') === 0) out[h.then.slice(5)] = 1;
-    if (h.items) Object.keys(h.items).forEach(x => {
-      const e = h.items[x];
+    if (h.gives) out[h.gives] = 1;
+    if (h.reactions) Object.keys(h.reactions).forEach(x => {
+      const e = h.reactions[x];
       if (e && typeof e === 'object' && !e.hint) scan(e);
     });
   };
   objs.forEach(o => {
     if (areaKey(o) !== key) return;
-    if (o.item) out[o.item] = 1;
-    scan(o); scan(o.locked); scan(o.open);
+    scan(o); scan(o.onUnlock);
   });
   return Object.keys(out);
-}
-
-// the flags a step already sets (reused for ordering wires)
-function stepSets(n) {
-  const cs = n.ref && n.ref.kind === 'cutscene' && CUTSCENES[n.ref.name];
-  if (cs) return toList(cs.setFlag);
-  const hs = hotspotOfNode(n);
-  if (!hs) return [];
-  const out = {};
-  const objs = SCENES[hs.rn].objects || [];
-  const key = areaKey(hs.o);
-  const scan = h => {
-    if (!h) return;
-    toList(h.setFlag).forEach(f => { out[f] = 1; });
-    if (h.then && h.then.indexOf('cut:') === 0) {
-      const c = CUTSCENES[h.then.slice(4)];
-      if (c) toList(c.setFlag).forEach(f => { out[f] = 1; });
-    }
-    if (h.items) Object.keys(h.items).forEach(x => {
-      const e = h.items[x];
-      if (e && typeof e === 'object' && !e.hint) scan(e);
-    });
-  };
-  objs.forEach(o => {
-    if (areaKey(o) !== key) return;
-    scan(o); scan(o.locked); scan(o.open);
-  });
-  return Object.keys(out);
-}
-
-// where a step's "this happened" flag should live: the moment the
-// player completes it
-function setterHolder(o) {
-  if (o.item) return o;
-  if (o.gate || o.locked) return (o.locked = o.locked || {});
-  return o;
-}
-
-// a camelCase flag suggestion from the step's label ("take key" → "takeKey")
-function suggestFlag(label) {
-  const parts = String(label).split(/[^a-zA-Z0-9]+/).filter(Boolean);
-  return parts.map((p, i) => (i ? p[0].toUpperCase() + p.slice(1) : p)).join('')
-    .replace(/^[^a-zA-Z]+/, '') || 'newFlag';
 }
 
 function wireMeanings(g, fromId, toId) {
   const fn = g.nodes[fromId], tn = g.nodes[toId];
   const out = [];
-  // apply may return false to take over (it opens its own prompt)
-  const add = (label, sub, apply) => out.push({ label, sub, pick: (sx, sy) => {
-    if (apply(sx, sy) === false) return;
+  const add = (label, sub, apply) => out.push({ label, sub, pick: () => {
+    apply();
     markDirty();
     refresh();
   } });
@@ -2023,65 +1983,44 @@ function wireMeanings(g, fromId, toId) {
             if (slot === -1) c.parts.push(it); else c.parts[slot] = it;
           });
         }
-      } else if (target && !target.o.item) {
+      } else if (target && !isPickup(target.o)) {
         const o = target.o;
-        if (o.gate || o.locked) {
+        if (o.needs) {
           add(it + ' unlocks it', 'the lock opens with ' + it, () => {
-            (o.locked = o.locked || {}).needs = it;
+            o.needs = it;
           });
         } else {
           add('needs a lock opened by ' + it, 'wraps the step in a lock', () => {
-            lockHotspot(o, it, target.rn);
+            addLock(o, it);
           });
         }
         add('works with ' + it + ' used on it', 'an item reaction with its own clip', () => {
-          const holder = o.locked || o;
-          holder.items = holder.items || {};
-          if (!holder.items[it]) holder.items[it] = { consume: true };
+          o.reactions = o.reactions || {};
+          if (!o.reactions[it]) o.reactions[it] = { consume: true };
         });
       }
     });
 
-    // pure ordering: carried by a flag the editor wires up
-    const owner = target && target.o; // `when` lives on the hotspot
-    if (owner) {
-      const already = stepSets(fn);
-      add('must happen first', already.length
-          ? 'uses its flag ⚑' + already[0]
-          : 'creates a ⚑ flag between them', (sx, sy) => {
-        if (already.length) {
-          addWhenTo(owner, already[0], false);
-          return;
-        }
-        popupPrompt(sx, sy, 'name the flag that remembers "' + fn.label + '"',
-          'flag name', f => {
-            const src = hotspotOfNode(fn);
-            const holder = src ? setterHolder(src.o)
-              : (fn.ref.kind === 'cutscene' ? CUTSCENES[fn.ref.name] : null);
-            if (!holder) return;
-            addFlagTo(holder, f);
-            addWhenTo(owner, f, false);
-            markDirty();
-            refresh();
-          }, suggestFlag(fn.label));
-        return false;
-      });
+    // pure ordering: written straight into the target's after list
+    const doneId = doneIdOfNode(fn);
+    if (target && doneId) {
+      add('must happen first', 'adds after: ["' + doneId + '"]', () =>
+        addAfterTo(target.o, doneId));
     }
 
-    // triggering a not-yet-triggered cutscene folds it onto this step
+    // wiring a step into a cutscene node makes the step play it
     if (tn.ref.kind === 'cutscene' && fn.ref.kind === 'hotspot') {
       const src = hotspotOfNode(fn);
       const cn = tn.ref.name;
-      if (src && !src.o.item) {
-        add('this step plays ' + cn, 'the cutscene rides on the step', () =>
-          setThen(tapHolder(src.o), src.rn)('cut:' + cn));
-        if (src.o.gate || src.o.locked) {
-          add('unlocking plays ' + cn, null, () =>
-            setThen(src.o.locked = src.o.locked || {}, src.rn)('cut:' + cn));
+      if (src && !isPickup(src.o)) {
+        add('this step plays ' + cn, 'tap (or open state) plays the cutscene', () => {
+          src.o.plays = cn;
+        });
+        if (src.o.needs) {
+          add('unlocking plays ' + cn, null, () => {
+            (src.o.onUnlock = src.o.onUnlock || {}).plays = cn;
+          });
         }
-      } else if (src) {
-        add('taking it plays ' + cn, null, () =>
-          setThen(src.o, src.rn)('cut:' + cn));
       }
     }
   }
@@ -2089,29 +2028,32 @@ function wireMeanings(g, fromId, toId) {
   /* step → room: the step opens the way (or is a plain exit) */
   if (fn.kind === 'step' && toRoom) {
     const src = hotspotOfNode(fn);
-    if (src && !src.o.item) {
+    if (src && !isPickup(src.o)) {
       const o = src.o;
-      add('opens the way to ' + toRoom, 'a locked passage this step unlocks', () => {
-        if (!o.gate && !o.locked) lockHotspot(o, null, src.rn);
-        setThen(tapHolder(o), src.rn)('go:' + toRoom);
+      // to make a LOCKED passage: wire an item onto the step first
+      // (that adds the lock), then wire the step to the room
+      add(o.needs ? 'opens the way to ' + toRoom
+                  : 'walk-through exit to ' + toRoom,
+          o.needs ? 'walkable once this lock is opened'
+                  : 'always open — joins the rooms', () => {
+        o.goes = toRoom;
+        o.entryAnim = conv.arrive(toRoom, src.rn);
       });
-      add('walk-through exit to ' + toRoom, 'always open — joins the rooms', () =>
-        setThen(tapHolder(o), src.rn)('go:' + toRoom));
     }
     if (fn.ref.kind === 'cutscene') {
       const cs = CUTSCENES[fn.ref.name];
       if (cs) add('afterwards go to ' + toRoom, 'pick the walk-in clip in the inspector',
-        () => { cs.then = 'go:' + toRoom; delete cs.entryAnim; });
+        () => { cs.goes = toRoom; delete cs.entryAnim; });
     }
   }
 
   /* room → room: draw a new exit between them */
   if (fromRoom && toRoom) {
     add('add an exit to ' + toRoom, 'a walk-through hotspot (place it on the stage)', () => {
-      const o = newHotspot(fromRoom, { area: [340, 240, 460, 360] });
-      setThen(o, fromRoom)('go:' + toRoom);
+      newHotspot(fromRoom, { area: [340, 240, 460, 360], goes: toRoom,
+                             entryAnim: conv.arrive(toRoom, fromRoom) });
       mapSelect({ kind: 'hotspot', room: fromRoom,
-                  idx: SCENES[fromRoom].objects.length - 1 });
+                  idx: SCENES[fromRoom].hotspots.length - 1 });
     });
   }
 
@@ -2126,7 +2068,7 @@ let wireDrag = null; // { from, x, y (world), over }
 function refNodeId(ref) {
   if (!ref) return null;
   if (ref.kind === 'hotspot') {
-    const objs = (SCENES[ref.room] || {}).objects || [];
+    const objs = (SCENES[ref.room] || {}).hotspots || [];
     if (!objs[ref.idx]) return null;
     return stepNodeId(ref.room, ref.idx);
   }
@@ -2240,7 +2182,7 @@ function renderMap(reuse) {
     const w = toWorld(e.clientX, e.clientY);
     popupPrompt(e.clientX, e.clientY, 'New room', 'room id, e.g. kitchen', v => {
       if (SCENES[v]) return;
-      SCENES[v] = { objects: [] };
+      SCENES[v] = { hotspots: [] };
       ensureRoomDefaults(v);
       LAYOUT.nodes['room:' + v] = [w[0] - W / 2, w[1] - H / 2];
       markDirty();
@@ -2272,7 +2214,7 @@ function renderMap(reuse) {
       e.stopPropagation();
       newHotspot(rn, { area: [340, 240, 460, 360] });
       markDirty();
-      mapSelect({ kind: 'hotspot', room: rn, idx: SCENES[rn].objects.length - 1 });
+      mapSelect({ kind: 'hotspot', room: rn, idx: SCENES[rn].hotspots.length - 1 });
     };
   });
 
@@ -2311,9 +2253,11 @@ function renderMap(reuse) {
     const key = e.from + '>' + e.to;
     const isSel = wireSel === key;
     const geom = edgeGeom(a, b, nodeH(g.nodes[e.from]), nodeH(g.nodes[e.to]));
-    const p = svgEl('path', { d: geom.d, fill: 'none',
+    const attrs = { d: geom.d, fill: 'none',
       stroke: isSel ? '#8cf' : '#4a5064', 'stroke-width': isSel ? '2.5' : '1.5',
-      'marker-end': isSel ? 'url(#maparrowsel)' : 'url(#maparrow)' }, world);
+      'marker-end': isSel ? 'url(#maparrowsel)' : 'url(#maparrow)' };
+    if (e.dashed) attrs['stroke-dasharray'] = '6 4'; // after-step ordering
+    const p = svgEl('path', attrs, world);
     (touching[e.from] = touching[e.from] || []).push(p);
     (touching[e.to] = touching[e.to] || []).push(p);
     // fat invisible twin catches clicks
@@ -2545,7 +2489,7 @@ document.getElementById('addbtn').onclick = e => {
     { label: 'Room…', sub: 'a place with a background and hotspots', pick: () =>
       popupPrompt(e.clientX, e.clientY + 10, 'New room', 'room id, e.g. kitchen', v => {
         if (SCENES[v]) return;
-        SCENES[v] = { objects: [] };
+        SCENES[v] = { hotspots: [] };
         ensureRoomDefaults(v);
         markDirty();
         mapSelect({ kind: 'room', room: v });
@@ -2553,15 +2497,15 @@ document.getElementById('addbtn').onclick = e => {
     { label: 'Take an item…', sub: 'a pickup lying in a room', pick: () =>
       roomPick(rn => popupPrompt(e.clientX, e.clientY + 10, 'New item in ' + rn,
         'item id, e.g. rope', v => {
-          newHotspot(rn, { item: v, area: [340, 240, 460, 360], anim: conv.pick(rn, v) });
+          newHotspot(rn, { gives: v, area: [340, 240, 460, 360], anim: conv.pick(rn, v) });
           markDirty();
-          mapSelect({ kind: 'hotspot', room: rn, idx: SCENES[rn].objects.length - 1 });
+          mapSelect({ kind: 'hotspot', room: rn, idx: SCENES[rn].hotspots.length - 1 });
         })) },
     { label: 'Step in a room…', sub: 'a hotspot: lock, item use, lever…', pick: () =>
       roomPick(rn => {
         newHotspot(rn, { area: [340, 240, 460, 360] });
         markDirty();
-        mapSelect({ kind: 'hotspot', room: rn, idx: SCENES[rn].objects.length - 1 });
+        mapSelect({ kind: 'hotspot', room: rn, idx: SCENES[rn].hotspots.length - 1 });
       }) },
     { label: 'Make an item (combine)', sub: 'item + item = new item', pick: () => {
         COMBINE.push({ parts: ['', ''], makes: '' });
@@ -2584,7 +2528,7 @@ function validateSel() {
   if (!mapSel) return;
   const k = mapSel.kind;
   if (k === 'hotspot' &&
-      !(SCENES[mapSel.room] && SCENES[mapSel.room].objects[mapSel.idx])) mapSel = null;
+      !(SCENES[mapSel.room] && SCENES[mapSel.room].hotspots[mapSel.idx])) mapSel = null;
   else if (k === 'room' && !SCENES[mapSel.room]) mapSel = null;
   else if (k === 'cutscene' && !CUTSCENES[mapSel.name]) mapSel = null;
   else if (k === 'recipe' && !COMBINE[mapSel.idx]) mapSel = null;
@@ -2650,16 +2594,18 @@ function renderCutsceneEditor(panel, csName) {
   let b = line(d);
   word(b, 'tap to skip');
   b.appendChild(boolInput(cs.skip, setOrDelete(cs, 'skip')));
-  word(b, 'afterwards');
-  b.appendChild(selectInput(afterGroups(false).filter(g => g.label === 'rooms'),
-    cs.then, setOrDelete(cs, 'then'), { blank: 'back to the room', labelFn: afterLabel }));
-  const csTarget = goTarget(cs.then);
-  if (csTarget) {
+  word(b, 'afterwards go to');
+  b.appendChild(selectInput(Object.keys(SCENES), cs.goes, v => {
+    setOrDelete(cs, 'goes')(v);
+    if (!v) delete cs.entryAnim;
+  }, { blank: 'back to the room' }));
+  if (cs.goes) {
     word(b, 'arriving with');
-    b.appendChild(selectInput(arriveClips(csTarget), cs.entryAnim, setOrDelete(cs, 'entryAnim')));
+    b.appendChild(selectInput(arriveClips(cs.goes), cs.entryAnim, setOrDelete(cs, 'entryAnim')));
   }
-  const ds = sec(panel, 'story', 'Story');
-  flagsLine(ds, cs, 'finished, sets');
+  el('div', { class: 'muted', text:
+    'finishing is the step "' + csName + '" — hotspots with ' +
+    'after: ["' + csName + '"] appear once it has played' }, d);
 
   el('h2', { text: 'Steps — click a row to preview it above' }, panel);
   const table = el('table', { class: 'steps' }, panel);
@@ -2709,9 +2655,10 @@ function renderSide() {
     el('h2', { text: 'The map is the walkthrough' }, panel);
     el('div', { class: 'muted', html:
       'Every node is a <b>step</b> — something the player does. Every ' +
-      'wire means <b>“needs this first”</b>, labelled with the item ' +
-      '(or ⚑flag) that carries it. Rooms are the dashed boxes; a ' +
-      'locked door is a step whose wire <i>opens</i> the next box.<br><br>' +
+      'wire means <b>“needs this first”</b>: labelled with the item ' +
+      'that carries it, or dashed for plain ordering (after-steps). ' +
+      'Rooms are the boxes; a locked door is a step whose wire ' +
+      '<i>opens</i> the next box.<br><br>' +
       '<b>click a step</b> — edit it here (stage above for its room)<br>' +
       '<b>drag a node</b> — arrange the map (saved with the game)<br>' +
       '<b>drag from a node’s ●</b> — connect: “this needs that”<br>' +
@@ -2722,8 +2669,8 @@ function renderSide() {
     return;
   }
   if (mapSel.kind === 'hotspot') {
-    el('h2', { text: room + ' · ' + objectLabel(SCENES[room].objects[sel], sel) }, panel);
-    renderHotspot(panel, SCENES[room].objects[sel]);
+    el('h2', { text: room + ' · ' + objectLabel(SCENES[room].hotspots[sel], sel) }, panel);
+    renderHotspot(panel, SCENES[room].hotspots[sel]);
   } else if (mapSel.kind === 'room') {
     renderRoomCard(panel);
   } else if (mapSel.kind === 'cutscene') {
@@ -2799,18 +2746,15 @@ document.getElementById('savebtn').onclick = () => {
   statusEl.textContent = 'saving…'; statusEl.style.color = '#8cf';
   LAYOUT.view = view;
   LAYOUT.v = 2;
+  const start = { room: START_ROOM };
+  if (START_CUT) start.play = START_CUT;
+  const game = { start: start, rooms: SCENES, cutscenes: CUTSCENES,
+                 combine: COMBINE };
+  if (COMBINE_HINT) game.combineHint = COMBINE_HINT;
   fetch('/api/scenes', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      startRoom: START_ROOM || null,
-      startCutscene: START_CUT || null,
-      cutscenes: CUTSCENES,
-      combine: COMBINE,
-      combineHint: COMBINE_HINT || null,
-      scenes: SCENES,
-      layout: LAYOUT
-    })
+    body: JSON.stringify({ game: game, layout: LAYOUT })
   }).then(r => r.json()).then(r => {
     if (r.ok) {
       dirty = false;

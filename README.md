@@ -24,32 +24,38 @@ breaks audio on iOS even after the warning is accepted.
 
 ## How a game fits together
 
-Everything is data in `scenes.js` (documented in detail in its header):
+Everything is one `window.GAME` object in `scenes.js` (documented in
+detail in its header), shaped like the editor's step map:
 
-- **Rooms** (`window.SCENES`) — a background, an idle character clip,
-  and a list of **hotspots**.
-- **Hotspots** — a *pickup* (an item lying in the room) or a *spot*
-  (everything else). A spot plays a clip/sound on tap, can lead
-  somewhere (**afterwards**), can be wrapped in a **lock** that wants an
-  item, and can react to specific items being used on it.
-- **Items** live in the hotbar; **combine** recipes merge two into one.
-- **Flags** wire puzzles together: anything can set a flag, anything can
-  appear only `when` flags hold. Hotspots sharing one area are one spot
-  with several flag-switched **states** (fountain full / fountain empty).
-- **Cutscenes** — timed full-frame clip sequences, triggerable from any
-  hotspot (`cut:name`) or at boot (`START_CUTSCENE`).
+- **Rooms** (`GAME.rooms`) — a background, an idle character clip, and
+  a list of **hotspots**.
+- **Hotspots are steps** — one shape for everything. A pickup is just
+  `gives: 'key'`. A lock is `needs: 'coin'` (+ `hint`, `useAnim`,
+  `gateArt`, `onUnlock`). What a successful tap causes are the named
+  keys `gives` / `plays` / `goes`, run in that order.
+- **No flags.** The engine records completed step ids in a `done` set;
+  `after: ['gnome_dance']` / `afterNot: [...]` on any hotspot gate its
+  existence on those steps. Hotspots sharing one area are one spot with
+  several after-switched **states** (fountain full / fountain empty).
+- **Items** live in the hotbar; **combine** recipes merge two into one
+  (their completion id is `make:<result>`).
+- **Cutscenes** (`GAME.cutscenes`) — timed full-frame clip sequences,
+  triggered by a step's `plays:` or at boot (`GAME.start.play`).
+  Finishing one is itself a step other things can be `after`.
 
 The editor is **one screen**: a node map on the left, a context pane
 (stage + inspector) on the right, and an issues strip at the bottom.
 The map is a **puzzle-dependency chart in the player's own terms**:
 every node is a *step* ("take key", "unlock door to garden", "make
-fishingrod"), every wire means *"needs this first"* and is labelled
-with the item (or ⚑flag) that carries it. Rooms are containers, not
-steps — a locked door is a step whose wire *opens* the next room.
-Drag between nodes to wire logic; click a wire to delete it; node
-positions persist in `editor-layout.json` (never loaded by the game).
-The issues drawer lists broken wiring (unobtainable items, dead flags)
-and every missing art/sound file with what needs it.
+fishingrod", "watch gnome_dance"), every wire means *"needs this
+first"* — labelled with the item that carries it, or dashed for plain
+`after` ordering. Rooms are containers, not steps — a locked door is a
+step whose wire *opens* the next room; plain exits are thin one-way
+arrows (one per direction). Drag between nodes to wire logic; click a
+wire to delete it; node positions persist in `editor-layout.json`
+(never loaded by the game). The issues drawer lists broken wiring
+(unobtainable items, unknown after-steps) and every missing art/sound
+file with what needs it.
 
 ## Art workflow
 

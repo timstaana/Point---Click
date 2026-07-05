@@ -49,31 +49,19 @@ function serializeScenes(d) {
     var m = cur.match(/^\/\*[\s\S]*?\*\//);
     if (m) header = m[0] + '\n';
   } catch (e) {}
-  var parts = [header];
-  if (d.startRoom) {
-    parts.push('window.START_ROOM = ' + JSON.stringify(d.startRoom) + ';\n');
-  }
-  if (d.startCutscene) {
-    parts.push('window.START_CUTSCENE = ' + JSON.stringify(d.startCutscene) + ';\n');
-  }
-  parts.push('window.CUTSCENES = ' + JSON.stringify(d.cutscenes || {}, null, 2) + ';\n');
-  parts.push('window.COMBINE = ' + JSON.stringify(d.combine || [], null, 2) + ';\n');
-  if (d.combineHint) {
-    parts.push('window.COMBINE_HINT = ' + JSON.stringify(d.combineHint) + ';\n');
-  }
-  parts.push('window.SCENES = ' + JSON.stringify(d.scenes, null, 2) + ';\n');
-  return parts.join('\n');
+  return header + '\nwindow.GAME = ' + JSON.stringify(d.game, null, 2) + ';\n';
 }
 
-function validScenes(scenes) {
-  if (!scenes || typeof scenes !== 'object') return false;
-  var names = Object.keys(scenes);
+function validGame(game) {
+  if (!game || typeof game !== 'object') return false;
+  if (!game.rooms || typeof game.rooms !== 'object') return false;
+  var names = Object.keys(game.rooms);
   if (!names.length) return false;
   for (var i = 0; i < names.length; i++) {
-    var s = scenes[names[i]];
+    var s = game.rooms[names[i]];
     if (!s || typeof s.bg !== 'string' || !s.bg ||
         typeof s.idle !== 'string' || !s.idle ||
-        !Array.isArray(s.objects)) return false;
+        !Array.isArray(s.hotspots)) return false;
   }
   return true;
 }
@@ -124,8 +112,8 @@ function handleApi(req, res) {
         sendJson(res, 400, { error: 'bad JSON' });
         return;
       }
-      if (!validScenes(data.scenes)) {
-        sendJson(res, 400, { error: 'scenes failed validation (every room needs bg, idle and an objects list) — nothing written' });
+      if (!validGame(data.game)) {
+        sendJson(res, 400, { error: 'game data failed validation (every room needs bg, idle and a hotspots list) — nothing written' });
         return;
       }
       var target = path.join(__dirname, 'scenes.js');
