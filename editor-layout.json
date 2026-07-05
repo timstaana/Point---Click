@@ -1,0 +1,58 @@
+{
+ "nodes": {
+  "step:cut:intro": [
+   24,
+   16
+  ],
+  "room:hallway": [
+   24,
+   110
+  ],
+  "step:hs_hallway_4": [
+   24,
+   188
+  ],
+  "step:hs_hallway_2": [
+   24,
+   266
+  ],
+  "room:bedroom": [
+   224,
+   110
+  ],
+  "step:hs_bedroom_1": [
+   224,
+   188
+  ],
+  "step:make:0": [
+   24,
+   516
+  ],
+  "room:garden": [
+   224,
+   360
+  ],
+  "step:hs_garden_2": [
+   224,
+   438
+  ],
+  "step:hs_garden_3": [
+   224,
+   594
+  ],
+  "step:hs_garden_5": [
+   224,
+   672
+  ],
+  "step:hs_garden_6": [
+   224,
+   750
+  ]
+ },
+ "view": {
+  "x": 338.77314814814815,
+  "y": 11.342592592592593,
+  "k": 0.8101851851851852
+ },
+ "v": 2
+}

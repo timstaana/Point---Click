@@ -14,7 +14,7 @@
  * #hotbar, #cursor-layer (software cursor). Hotspots are plain
  * positioned divs — rectangles only (polygons use bounding box).
  *
- * Sound: Web Audio first — each room's WAVs are downloaded per scene
+ * Sound: Web Audio first — each room's WAVs are downloaded per room
  * (XHR) and decoded into memory buffers, so playback is instant with no
  * network at play time. One shared <audio> element is the fallback for
  * buffers still downloading / browsers without Web Audio; iOS only lets
@@ -29,9 +29,9 @@
 (function () {
   'use strict';
 
-  var scenes = window.SCENES;
+  var rooms = window.SCENES;
   var items = window.ITEMS || {};
-  var current = window.START_ROOM || 'bedroom';
+  var currentRoom = window.START_ROOM || 'bedroom';
   var busy = false;
   var inv = [];
   var spent = {};
@@ -221,11 +221,11 @@
     updateScaleSoon();
     initCursor();
     // Create every item's icon cursor up front: item ids come from the
-    // scene pickups and the combine recipes.
+    // room pickups and the combine recipes.
     var sn, oi, objs;
-    for (sn in scenes) {
-      if (!scenes.hasOwnProperty(sn)) continue;
-      objs = scenes[sn].objects || [];
+    for (sn in rooms) {
+      if (!rooms.hasOwnProperty(sn)) continue;
+      objs = rooms[sn].objects || [];
       for (oi = 0; oi < objs.length; oi++) {
         if (objs[oi].item) ensureItemCursor(objs[oi].item);
       }
@@ -253,7 +253,7 @@
     // loaded — otherwise the hotbar pops in before the stage. If a
     // START_CUTSCENE is declared, it plays first (also fully loaded).
     gameEl.style.visibility = 'hidden';
-    preloadScene(current, 'ui_hotbar.png', function () {
+    preloadRoom(currentRoom, 'ui_hotbar.png', function () {
       var sc = window.START_CUTSCENE;
       if (sc && window.CUTSCENES && window.CUTSCENES[sc]) {
         preloadCutscene(sc, function () {
@@ -262,7 +262,7 @@
         });
       } else {
         gameEl.style.visibility = '';
-        enterScene(current, null, 0);
+        enterRoom(currentRoom, null, 0);
       }
     });
   }
@@ -491,7 +491,7 @@
   }
 
   // Resolve which file a named sfx should use for this hotspot:
-  // hotspot override -> scene override -> global default.
+  // hotspot override -> room override -> global default.
   function sfxFile(name, h) {
     if (h) {
       if (name === 'fail') {
@@ -501,8 +501,8 @@
         if (h.sound) return h.sound;
       }
     }
-    var scene = scenes[current] || {};
-    if (scene.sounds && scene.sounds[name]) return scene.sounds[name];
+    var room = rooms[currentRoom] || {};
+    if (room.sounds && room.sounds[name]) return room.sounds[name];
     var defaults = window.SOUNDS || {};
     return defaults[name] || DEFAULT_SOUNDS[name];
   }
@@ -542,7 +542,7 @@
 
   // Natural length of a one-shot clip (frames x ms-per-frame); 0 for
   // looping/static/unknown art — callers fall through to their default.
-  // This is how scene `dur`s stay in sync with the GIF sources: omit
+  // This is how room `dur`s stay in sync with the GIF sources: omit
   // dur and the clip's real length is used automatically.
   function clipLength(name) {
     var meta = name && window.SHEETS && window.SHEETS[name];
@@ -606,18 +606,18 @@
   function swapObject(fileName) { channels.obj = makeClip(fileName); requestPaint(); }
   function clearObject()        { channels.obj = null; requestPaint(); }
 
-  /* ---------- scene lifecycle ---------- */
+  /* ---------- room lifecycle ---------- */
 
-  function enterScene(name, entryAnim, entryDur) {
-    current = name;
-    var scene = scenes[name];
-    swapBg(scene.bg);
+  function enterRoom(name, entryAnim, entryDur) {
+    currentRoom = name;
+    var room = rooms[name];
+    swapBg(room.bg);
     clearObject();
     clearItems();
     clearHotspots();
     if (entryAnim) {
       swapChar(entryAnim);
-      renderSceneObjects(scene); // props must be visible during the walk-in
+      renderRoomObjects(room); // props must be visible during the walk-in
       setBusy(true);
       window.setTimeout(function () {
         setBusy(false);
@@ -629,11 +629,11 @@
   }
 
   function showIdle() {
-    var scene = scenes[current];
+    var room = rooms[currentRoom];
     // all channel changes land in the same tick, so the swap is atomic
     clearObject();
-    swapChar(scene.idle);
-    renderSceneObjects(scene);
+    swapChar(room.idle);
+    renderRoomObjects(room);
   }
 
   /* ---------- cutscenes ----------
@@ -659,7 +659,7 @@
     clearObject();
     // the follow-up room loads while the cutscene plays
     if (cs.then && cs.then.indexOf('go:') === 0) {
-      preloadScene(cs.then.substring(3), cs.entryAnim, null);
+      preloadRoom(cs.then.substring(3), cs.entryAnim, null);
     }
     var i = 0;
     var timer = null;
@@ -668,7 +668,7 @@
       setBusy(false);
       // staying in (or returning to) a room: restore its backdrop
       if (!cs.then || cs.then.indexOf('go:') !== 0) {
-        swapBg(scenes[current].bg);
+        swapBg(rooms[currentRoom].bg);
       }
       dispatch(cs);
     }
@@ -739,15 +739,15 @@
     return condMatches(when);
   }
 
-  /* ---------- scene objects ---------- */
+  /* ---------- room objects ---------- */
 
   function clearItems() {
     channels.items = [];
     requestPaint();
   }
 
-  function renderSceneObjects(scene) {
-    renderObjects(scene.objects);
+  function renderRoomObjects(room) {
+    renderObjects(room.objects);
   }
 
   var preloaded = {};
@@ -764,18 +764,18 @@
     return preloaded[fileName];
   }
 
-  /* ---------- per-scene asset preloading ----------
+  /* ---------- per-room asset preloading ----------
    * A room is only shown once every clip and sound it references is
    * loaded, so a clip never plays blank on its first run. There is no
    * loading indicator: on a room change we simply stay in the current
    * room (the exit walk-out clip usually covers the whole wait, and the
    * preload starts as soon as the exit is tapped). Art is found by
-   * scanning the scene data for *.png / *.wav names plus the derived
+   * scanning the room data for *.png / *.wav names plus the derived
    * pickup / gate / icon names. Sounds are warmed into the HTTP cache
    * with XHR so the single <audio> element can start them instantly. */
   var warmedSounds = {};
 
-  // Scan any schema node (scene, cutscene) for art/sound file names.
+  // Scan any schema node (room, cutscene) for art/sound file names.
   function scanAssets(node) {
     var art = {};
     var sounds = {};
@@ -789,12 +789,12 @@
     return { art: art, sounds: sounds };
   }
 
-  function sceneAssets(name) {
-    var scene = scenes[name] || {};
-    var assets = scanAssets(scene);
+  function roomAssets(name) {
+    var room = rooms[name] || {};
+    var assets = scanAssets(room);
     var art = assets.art;
     var i;
-    var list = scene.objects || [];
+    var list = room.objects || [];
     for (i = 0; i < list.length; i++) {
       var o = list[i];
       if (o.item) {
@@ -870,8 +870,8 @@
     step();
   }
 
-  function preloadScene(name, extraArt, cb) {
-    preloadAssets(sceneAssets(name), extraArt, cb);
+  function preloadRoom(name, extraArt, cb) {
+    preloadAssets(roomAssets(name), extraArt, cb);
   }
 
   function preloadCutscene(name, cb) {
@@ -880,13 +880,13 @@
 
   // Pickups: shorthand for "an item lying in the room". Art is two files
   // named after the item id:
-  //   item_<scene>_<id>.png (full-frame cel) / icon_<id>.png (40x40 icon)
-  function expandItem(obj) {
+  //   item_<room>_<id>.png (full-frame cel) / icon_<id>.png (40x40 icon)
+  function expandPickup(obj) {
     if (!obj.item) return obj;
     preload(iconFor(obj.item));
     return {
       id: obj.item,
-      src: 'item_' + current + '_' + obj.item + '.png',
+      src: 'item_' + currentRoom + '_' + obj.item + '.png',
       area: obj.area, when: obj.when,
       anim: obj.anim, objAnim: obj.objAnim, dur: obj.dur,
       sound: obj.sound,
@@ -975,7 +975,7 @@
     clearHotspots();
     if (!list) return;
     for (var i = 0; i < list.length; i++) {
-      var obj = normalizeAction(resolveObject(expandGate(expandItem(list[i]))));
+      var obj = normalizeAction(resolveObject(expandGate(expandPickup(list[i]))));
       if (!whenMatches(obj.when) || isObjectSpent(obj)) continue;
       if (obj.src) {
         channels.items.push(makeClip(obj.src));
@@ -1096,7 +1096,7 @@
     clearHotspots();
     if (h.then && h.then.indexOf('go:') === 0) {
       // head start: load the next room while the walk-out clip plays
-      preloadScene(h.then.substring(3), h.entryAnim, null);
+      preloadRoom(h.then.substring(3), h.entryAnim, null);
     }
     if (h.then && h.then.indexOf('cut:') === 0) {
       preloadCutscene(h.then.substring(4), null);
@@ -1116,10 +1116,10 @@
     selectedItem = null;
     renderHotbar();
     playSfx('fail', h);
-    var scene = scenes[current] || {};
-    var failAnim = h.failAnim || scene.failAnim || DEFAULT_FAIL_ANIM;
-    var failDur  = h.failDur  || scene.failDur  || clipLength(failAnim) || 900;
-    var failThen = h.failThen || scene.failThen;
+    var room = rooms[currentRoom] || {};
+    var failAnim = h.failAnim || room.failAnim || DEFAULT_FAIL_ANIM;
+    var failDur  = h.failDur  || room.failDur  || clipLength(failAnim) || 900;
+    var failThen = h.failThen || room.failThen;
     setBusy(true);
     clearHotspots();
     swapChar(failAnim);
@@ -1179,10 +1179,10 @@
       // stay in the current room (holding the walk-out's last frame,
       // wait cursor, no indicator) until the next room is fully loaded
       setBusy(true);
-      preloadScene(target, h.entryAnim, function () {
+      preloadRoom(target, h.entryAnim, function () {
         setBusy(false);
         playSfx('door', h);
-        enterScene(target, h.entryAnim,
+        enterRoom(target, h.entryAnim,
                    h.entryDur || clipLength(h.entryAnim) || 1200);
       });
       return;
@@ -1328,7 +1328,7 @@
           return;
         }
         // No recipe: with a COMBINE_HINT line, treat it as a failed
-        // combine — the character plays the scene's fail animation with
+        // combine — the character plays the room's fail animation with
         // the line, same as using a wrong item on a hotspot. Without a
         // hint line, just switch the selection.
         if (window.COMBINE_HINT) {

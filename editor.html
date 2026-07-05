@@ -7,48 +7,91 @@
 <style>
   /* Dev tool: modern browsers only. The game itself never loads this. */
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0; background: #1c1e24; color: #ddd;
     font: 14px/1.5 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-    user-select: none;
+    user-select: none; overflow: hidden;
   }
   button { font: inherit; }
 
-  /* ---------- top bar ---------- */
-  #topbar {
-    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    padding: 8px 12px; background: #14151a; border-bottom: 1px solid #000;
-    position: sticky; top: 0; z-index: 10;
+  /* ---------- one screen: map | side pane, status strip below ---------- */
+  #app {
+    display: grid; height: 100vh;
+    grid-template-columns: 1fr 440px;
+    grid-template-rows: 1fr auto;
   }
-  #topbar h1 { font-size: 15px; margin: 0 12px 0 0; color: #fff; }
-  .tab { padding: 6px 16px; border-radius: 5px; cursor: pointer; background: #2a2d36;
-    display: flex; align-items: center; gap: 7px; }
-  .tab.active { background: #4a6fd4; color: #fff; }
-  .tab .badge { background: #c0392b; color: #fff; border-radius: 9px;
-    font-size: 11px; padding: 0 6px; line-height: 17px; }
-  .tab .badge.zero { background: #2e5e3a; }
+  #mapwrap { grid-area: 1 / 1; position: relative; overflow: hidden;
+    background: #191b21; }
+  #side { grid-area: 1 / 2; overflow-y: auto; overflow-x: hidden;
+    border-left: 1px solid #000; background: #1c1e24; padding: 10px; }
+  #statusbar {
+    grid-area: 2 / 1 / 3 / 3; display: flex; align-items: center; gap: 10px;
+    padding: 7px 12px; background: #14151a; border-top: 1px solid #000;
+    position: relative; z-index: 30;
+  }
+
+  /* ---------- map toolbar (floats over the canvas) ---------- */
+  #maptools {
+    position: absolute; top: 10px; left: 10px; z-index: 20;
+    display: flex; align-items: center; gap: 8px;
+  }
+  #maptools h1 { font-size: 15px; margin: 0 8px 0 0; color: #fff; }
+  .toolbtn {
+    padding: 6px 14px; border: 1px solid #383c48; border-radius: 6px;
+    background: #23252ce8; color: #ccc; cursor: pointer;
+  }
+  .toolbtn:hover { background: #2f323c; color: #fff; }
+  #maphint { position: absolute; left: 12px; bottom: 8px; z-index: 20;
+    color: #59607255; font-size: 12px; pointer-events: none;
+    color: #596072; }
+
+  /* ---------- node canvas ---------- */
+  #map { display: block; width: 100%; height: 100%; cursor: grab; }
+  #map.panning { cursor: grabbing; }
+  #map text { pointer-events: none; }
+
+  /* ---------- popups (wire meanings, add menu, name prompts) ---------- */
+  .popup {
+    position: absolute; z-index: 40; min-width: 180px; max-width: 300px;
+    background: #262933; border: 1px solid #4a5064; border-radius: 8px;
+    box-shadow: 0 6px 24px #000a; padding: 5px; font-size: 13px;
+  }
+  .popup .ptitle { padding: 4px 9px 6px; color: #99a; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.6px; }
+  .popup .pi { padding: 6px 10px; border-radius: 5px; cursor: pointer; color: #dde; }
+  .popup .pi:hover { background: #34405e; color: #fff; }
+  .popup .pi .sub { color: #778; font-size: 11px; }
+  .popup input[type=text] {
+    width: 100%; background: #14161c; color: #eee; border: 1px solid #d4a72c;
+    border-radius: 5px; padding: 5px 8px; font: 13px monospace;
+  }
+
+  /* ---------- status strip + issues drawer ---------- */
+  #issuestrip { cursor: pointer; padding: 3px 10px; border-radius: 5px; }
+  #issuestrip:hover { background: #23252c; }
+  #issuestrip .err { color: #ff9d9d; }
+  #issuestrip .ok { color: #6fc48c; }
+  #issuestrip .note { color: #e8d48a; }
+  #status { margin-left: auto; min-width: 90px; text-align: right; color: #888; }
   #savebtn {
-    margin-left: auto; padding: 8px 26px; border: 0; border-radius: 5px;
+    padding: 7px 26px; border: 0; border-radius: 5px;
     background: #3d9950; color: #fff; font-weight: 600; cursor: pointer; font-size: 14px;
   }
   #savebtn:hover { background: #46b25d; }
-  #reloadbtn { padding: 7px 14px; border: 0; border-radius: 5px; background: #2a2d36;
+  #reloadbtn { padding: 6px 14px; border: 0; border-radius: 5px; background: #2a2d36;
     color: #ccc; cursor: pointer; }
-  #status { min-width: 110px; text-align: right; }
 
-  #main { display: flex; flex-wrap: wrap; gap: 14px; padding: 14px; align-items: flex-start; }
-  #left { flex: 1 1 480px; min-width: 320px; max-width: 820px; }
-  #right { flex: 1 1 340px; min-width: 320px; max-width: 560px; }
-  #right.wide { max-width: 100%; }
+  #drawer {
+    position: absolute; left: 0; right: 440px; bottom: 41px; z-index: 25;
+    max-height: 45vh; overflow: auto; display: none;
+    background: #1e2027f5; border-top: 1px solid #383c48; padding: 10px 14px;
+  }
+  #drawer.open { display: block; }
 
-  /* ---------- room strip ---------- */
-  #roomtabs { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
-  .roomtab { padding: 5px 14px; border-radius: 5px; background: #2a2d36; cursor: pointer; }
-  .roomtab.active { background: #4a6fd4; color: #fff; }
-  .roomtab.add { background: #23252c; color: #888; }
-
-  /* ---------- stage (scales to fit the column) ---------- */
-  #stagebox { width: 100%; max-width: 800px; position: relative; overflow: hidden; }
+  /* ---------- side pane: stage on top, inspector below ---------- */
+  #stagebox { width: 100%; position: relative; overflow: hidden;
+    border-radius: 6px; margin-bottom: 10px; background: #000; }
   #stagewrap { width: 800px; height: 600px; position: relative; background: #000;
     transform-origin: 0 0; }
   #stage { position: absolute; top: 0; left: 0; }
@@ -63,15 +106,14 @@
   .hs .grip { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px;
     background: #6cf; border: 1px solid #036; cursor: nwse-resize; display: none; }
   .hs.sel .grip { display: block; }
-  #stagehint { color: #777; margin-top: 6px; font-size: 12px; }
+  #stagehint { color: #667; margin: -4px 0 10px; font-size: 11px; }
 
-  /* ---------- panels & sections ---------- */
-  .panel { background: #23252c; border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+  /* ---------- panels & inspector sections ---------- */
+  .panel { background: #23252c; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
   .panel h2 { font-size: 14px; margin: 0 0 12px; color: #fff; }
 
-  /* an inspector section: colour-coded left edge keeps the old block
-   * language — gold = story logic, blue = looks & sounds, green = where
-   * taps lead — but reads as a labelled form, not a wall of blocks */
+  /* colour-coded left edge: gold = story logic, blue = looks & sounds,
+   * green = where taps lead */
   .sec { border-left: 3px solid #555; background: #1e2027; border-radius: 0 7px 7px 0;
     padding: 9px 11px 7px; margin-bottom: 9px; }
   .sec.story { border-left-color: #d4a72c; }
@@ -106,7 +148,7 @@
   .ref { display: inline-block; padding: 1px 9px; border-radius: 10px;
     background: #2c3a55; color: #9cc3ff; font-size: 12px; cursor: pointer;
     margin: 1px 3px 1px 0; white-space: nowrap; }
-  .ref:hover { background: #38497000; background: #384970; color: #cfe3ff; }
+  .ref:hover { background: #384970; color: #cfe3ff; }
   .ref.warn { background: #55402c; color: #ffc98a; }
 
   /* art chips: what this thing needs on disk */
@@ -116,15 +158,6 @@
   .art.ok { background: #234a2c; color: #8fd89b; }
   .art.missing { background: #5a2626; color: #ff9d9d; }
 
-  /* cross-reference tables (Story tab) */
-  table.xref { width: 100%; border-collapse: collapse; font-size: 13px; }
-  table.xref th { text-align: left; color: #889; font-size: 11px;
-    text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 8px;
-    border-bottom: 1px solid #333; }
-  table.xref td { padding: 6px 8px; border-bottom: 1px solid #2a2d36;
-    vertical-align: top; }
-  table.xref td.name { font-family: monospace; color: #fff; white-space: nowrap; }
-
   details { margin-top: 10px; }
   details summary { color: #778; cursor: pointer; font-size: 12px; }
   details textarea { width: 100%; min-height: 90px; background: #171920; color: #eee;
@@ -132,7 +165,7 @@
     margin-top: 6px; }
 
   #objlist { list-style: none; margin: 0; padding: 0; }
-  #objlist li { display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  #objlist li { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
     border-radius: 5px; cursor: pointer; }
   #objlist li:hover { background: #2a2d36; }
   #objlist li.sel { background: #34405e; }
@@ -147,10 +180,11 @@
 
   .steps { width: 100%; border-collapse: collapse; }
   .steps td { padding: 3px; }
+  .steps tr.prev td { background: #1d2430; }
   .steps input, .steps select { width: 100%; background: #171920; color: #eee;
     border: 1px solid #333; border-radius: 4px; padding: 5px 6px; font: 12px monospace; }
 
-  /* issues tab */
+  /* issues drawer rows */
   .issue { display: flex; gap: 8px; align-items: baseline; padding: 5px 0;
     border-bottom: 1px solid #2a2d36; font-size: 13px; flex-wrap: wrap; }
   .issue .kind { flex: 0 0 auto; font-size: 11px; padding: 1px 8px; border-radius: 9px; }
@@ -161,32 +195,37 @@
 </head>
 <body>
 
-<div id="topbar">
-  <h1>Story Editor</h1>
-  <div class="tab active" data-tab="rooms">Rooms</div>
-  <div class="tab" data-tab="story">Story</div>
-  <div class="tab" data-tab="cutscenes">Cutscenes</div>
-  <div class="tab" data-tab="game">Game</div>
-  <div class="tab" data-tab="issues">Issues <span class="badge zero" id="issuebadge">0</span></div>
-  <button id="reloadbtn" title="Discard unsaved changes and reload from disk">Revert</button>
-  <span id="status"></span>
-  <button id="savebtn">Save</button>
-</div>
+<div id="app">
+  <div id="mapwrap">
+    <div id="maptools">
+      <h1>Story Editor</h1>
+      <button class="toolbtn" id="addbtn">+ Add</button>
+      <button class="toolbtn" id="tidybtn" title="Re-lay the map out as the walkthrough, top to bottom">&#10227; Tidy</button>
+      <button class="toolbtn" id="fitbtn" title="Fit the whole map in view">&#8865; Fit</button>
+    </div>
+    <svg id="map"></svg>
+    <div id="maphint">drag node = move &middot; drag from a node&rsquo;s &#9679; = connect
+      &middot; drag empty space = pan &middot; wheel = zoom &middot; double-click = add</div>
+  </div>
 
-<div id="main">
-  <div id="left">
-    <div id="roomtabs"></div>
+  <div id="side">
     <div id="stagebox">
       <div id="stagewrap">
         <canvas id="stage" width="800" height="600"></canvas>
         <div id="overlay"></div>
       </div>
     </div>
-    <div id="stagehint">Drag on empty space to draw a hotspot &middot; drag to move
-      &middot; blue corner resizes &middot; click selects &middot; hotspots sharing an
-      area are one spot with several <b>states</b> (switched by flags)</div>
+    <div id="stagehint"></div>
+    <div id="inspector"></div>
   </div>
-  <div id="right"></div>
+
+  <div id="statusbar">
+    <div id="issuestrip"></div>
+    <span id="status"></span>
+    <button id="reloadbtn" title="Discard unsaved changes and reload from disk">Revert</button>
+    <button id="savebtn">Save</button>
+  </div>
+  <div id="drawer"></div>
 </div>
 
 <script src="images/sheets.js"></script>

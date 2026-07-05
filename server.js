@@ -149,6 +149,16 @@ function handleApi(req, res) {
         sendJson(res, 500, { error: String(e2) });
         return;
       }
+      // node-map layout (editor-only, never loaded by the game) rides
+      // along with the save; a layout problem never fails the scenes save
+      if (data.layout && typeof data.layout === 'object') {
+        try {
+          fs.writeFileSync(path.join(__dirname, 'editor-layout.json'),
+                           JSON.stringify(data.layout, null, 1) + '\n');
+        } catch (e3) {
+          console.log('editor: layout save failed: ' + e3);
+        }
+      }
       console.log('editor: scenes.js saved (backup in backups/)');
       sendJson(res, 200, { ok: true });
     });

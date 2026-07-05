@@ -1,13 +1,15 @@
-/* Scene definitions.
+/* Room definitions — the whole game is data in this one file
+ * (edited by hand or through the editor at /editor.html).
  *
- * A SCENE is: bg (looping background clip), idle (looping character clip),
- * failAnim/failDur (default wrong-item reaction), objects (list below),
+ * window.SCENES maps room ids to ROOMS. A ROOM is: bg (looping background clip), idle (looping character clip),
+ * failAnim/failDur (default wrong-item reaction), objects (the room's
+ * hotspots, list below),
  * and optional `sounds` overrides for select/pickup/door/fail.
  *
- * OBJECTS — each is one clickable thing. The common shapes:
+ * OBJECTS (hotspots) — each is one clickable thing. The common shapes:
  *
  *   look    { area, anim, dur, sound }
- *   exit    { area, anim, dur, then: 'go:scene', entryAnim, entryDur }
+ *   exit    { area, anim, dur, then: 'go:room', entryAnim, entryDur }
  *   pickup  { item: 'key', area, anim, dur }
  *   gate    { gate: 'hallway_gardendoor', area, locked: {...}, open: {...} }
  *
@@ -20,7 +22,7 @@
  *          a voice line plays over the held last frame), or to time a
  *          LOOPING clip, which has no natural length. Same rule for
  *          entryDur, gate locked.dur and cutscene step durs.
- *   then:  what happens after the clip: 'go:scene' or 'pick:item'
+ *   then:  what happens after the clip: 'go:room' or 'pick:item'
  *          (omit to just return to idle)
  *   cursor: hover cursor name -> cursor_<name>.png (40x40, same size as
  *          icons); e.g. 'left'/'right' on exits pointing toward the next
@@ -133,7 +135,7 @@
  *          gate_<id>_open.png    loops afterwards
  *          The prop lives ONLY in the cels, never in the background,
  *          and the last _use frame must match _open.
- *   item:  item_<scene>_<id>.png (full-frame cel of it in that room)
+ *   item:  item_<room>_<id>.png (full-frame cel of it in that room)
  *          + icon_<id> (40x40 hotbar; also the held-item cursor)
  *
  * SOUND NAMING — same idea as art, so the editor can scope per room:
@@ -202,7 +204,8 @@ window.SCENES = {
           675,
           328
         ],
-        "anim": "char_bedroom_pick_key.png"
+        "anim": "char_bedroom_pick_key.png",
+        "id": "hs_bedroom_1"
       },
       {
         "area": [
@@ -214,7 +217,8 @@ window.SCENES = {
         "cursor": "left",
         "anim": "char_bedroom_exit_left.png",
         "then": "go:hallway",
-        "entryAnim": "char_hallway_from_bedroom.png"
+        "entryAnim": "char_hallway_from_bedroom.png",
+        "id": "hs_bedroom_2"
       },
       {
         "area": [
@@ -231,7 +235,8 @@ window.SCENES = {
             "hint": "vo_generic_key_wrong.wav",
             "hintDur": 2100
           }
-        }
+        },
+        "id": "hs_bedroom_3"
       }
     ]
   },
@@ -250,7 +255,8 @@ window.SCENES = {
         "cursor": "left",
         "anim": "char_hallway_exit_left.png",
         "then": "go:bedroom",
-        "entryAnim": "char_bedroom_from_hallway.png"
+        "entryAnim": "char_bedroom_from_hallway.png",
+        "id": "hs_hallway_1"
       },
       {
         "gate": "hallway_gardendoor",
@@ -273,7 +279,8 @@ window.SCENES = {
           "sound": "door.wav",
           "then": "go:garden",
           "entryAnim": "char_garden_from_hallway.png"
-        }
+        },
+        "id": "hs_hallway_2"
       },
       {
         "area": [
@@ -284,7 +291,8 @@ window.SCENES = {
         ],
         "objAnim": "obj_hallway_look_painting.png",
         "sound": "pickup.wav",
-        "anim": "char_hallway_look_painting.png"
+        "anim": "char_hallway_look_painting.png",
+        "id": "hs_hallway_3"
       },
       {
         "item": "string",
@@ -294,7 +302,8 @@ window.SCENES = {
           578,
           434
         ],
-        "anim": "char_hallway_pick_string.png"
+        "anim": "char_hallway_pick_string.png",
+        "id": "hs_hallway_4"
       }
     ]
   },
@@ -313,7 +322,8 @@ window.SCENES = {
         "cursor": "left",
         "anim": "char_garden_exit_left.png",
         "then": "go:hallway",
-        "entryAnim": "char_hallway_from_garden.png"
+        "entryAnim": "char_hallway_from_garden.png",
+        "id": "hs_garden_1"
       },
       {
         "item": "stick",
@@ -323,7 +333,8 @@ window.SCENES = {
           285,
           439
         ],
-        "anim": "char_garden_pick_stick.png"
+        "anim": "char_garden_pick_stick.png",
+        "id": "hs_garden_2"
       },
       {
         "area": [
@@ -344,7 +355,8 @@ window.SCENES = {
             "then": "pick:coin",
             "setFlag": "coinFished"
           }
-        }
+        },
+        "id": "hs_garden_3"
       },
       {
         "area": [
@@ -362,7 +374,8 @@ window.SCENES = {
             "hint": "vo_garden_fountain_empty.wav",
             "hintDur": 1100
           }
-        }
+        },
+        "id": "hs_garden_4"
       },
       {
         "gate": "garden_gnome",
@@ -382,7 +395,8 @@ window.SCENES = {
         },
         "open": {
           "sound": "select.wav"
-        }
+        },
+        "id": "hs_garden_5"
       },
       {
         "item": "medal",
@@ -395,7 +409,8 @@ window.SCENES = {
           693,
           466
         ],
-        "anim": "char_garden_pick_medal.png"
+        "anim": "char_garden_pick_medal.png",
+        "id": "hs_garden_6"
       }
     ]
   }
